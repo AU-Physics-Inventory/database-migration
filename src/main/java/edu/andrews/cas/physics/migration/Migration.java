@@ -1,22 +1,19 @@
 package edu.andrews.cas.physics.migration;
 
 import com.beust.jcommander.JCommander;
+import com.mongodb.client.model.Updates;
 import com.mongodb.reactivestreams.client.MongoClient;
 import com.mongodb.reactivestreams.client.MongoCollection;
 import com.mongodb.reactivestreams.client.MongoDatabase;
 import edu.andrews.cas.physics.cli.Args;
 import edu.andrews.cas.physics.inventory.model.mongodb.accountability.AccountabilityReports;
 import edu.andrews.cas.physics.inventory.model.mongodb.accountability.MissingReport;
-import edu.andrews.cas.physics.inventory.model.mongodb.asset.Asset;
-import edu.andrews.cas.physics.inventory.model.mongodb.asset.AssetPurchase;
-import edu.andrews.cas.physics.inventory.model.mongodb.asset.ManufacturerInfo;
-import edu.andrews.cas.physics.inventory.model.mongodb.asset.Vendor;
+import edu.andrews.cas.physics.inventory.model.mongodb.asset.*;
 import edu.andrews.cas.physics.inventory.model.mongodb.group.Group;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.CalibrationDetails;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.MaintenanceEvent;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.MaintenanceRecord;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.Status;
-import edu.andrews.cas.physics.inventory.model.mongodb.set.Set;
 import edu.andrews.cas.physics.inventory.model.mysql.Equipment;
 import edu.andrews.cas.physics.inventory.model.mysql.Maintenance;
 import edu.andrews.cas.physics.measurement.Quantity;
@@ -50,15 +47,13 @@ import static com.mongodb.client.model.Filters.eq;
 
 public class Migration {
     private static final Properties config = new Properties();
-
-    private static ConcurrentHashMap<Integer, String> receipts = new ConcurrentHashMap<>();
-    private static ConcurrentHashMap<Integer, List<String>> images = new ConcurrentHashMap<>();
-
     private static final Logger logger = LogManager.getLogger();
     private static final String receiptsFilePath = String.format(".%s%sreceipts.map", System.getProperty("user.home"), File.separator);
     private static final String imagesFilePath = String.format(".%s%simages.map", System.getProperty("user.home"), File.separator);
 
-    private static MongoDatabase db;
+    private static ConcurrentHashMap<Integer, String> receipts = new ConcurrentHashMap<>();
+    private static ConcurrentHashMap<Integer, List<String>> images = new ConcurrentHashMap<>();
+    private static MongoDatabase mongodb;
 
     public static void main(String[] argv) throws Exception {
         Args args = new Args();
@@ -70,7 +65,7 @@ public class Migration {
         config.load(ClassLoader.getSystemResourceAsStream("config.properties"));
 
         MongoClient client = MongoDBDataSource.getClient();
-        db = client.getDatabase(config.getProperty("mongodb.db"));
+        mongodb = client.getDatabase(config.getProperty("mongodb.db"));
 
         String username = config.getProperty("mysql.user");
         String DB_HOST = config.getProperty("mysql.host");
@@ -103,16 +98,97 @@ public class Migration {
             ois.close();
             fis.close();
         }
+        migrateManuals();
         migrateAssets();
         migrateSets();
         migrateGroups();
         migrateLabs();
     }
 
-    private static void migrateLabs() {
+    private static void migrateManuals() throws SQLException, InterruptedException, URISyntaxException {
+        Set<String> manualNames = Collections.synchronizedSet(new HashSet<>());
+        ArrayList<Integer> identityNos = new ArrayList<>();
+
+        Connection con = MySQLDataSource.getConnection();
+        if (!con.isValid(30)) throw new SQLException("Unable to connect to database.");
+        logger.info("Connection established successfully!");
+        Thread.sleep(4000);
+        logger.info("[START MIGRATION] Manuals");
+        logger.info("Retrieving IDs...");
+
+        PreparedStatement retrieveIdentityNos = con.prepareStatement("SELECT record_locator FROM manuals;");
+        ResultSet resultSet = retrieveIdentityNos.executeQuery();
+
+        while (resultSet.next()) {
+            identityNos.add(resultSet.getInt("id"));
+        }
+
+        resultSet.close();
+        retrieveIdentityNos.close();
+        con.close();
+
+        URI endpoint = new URI(config.getProperty("spaces.endpoint"));
+        final String spaceName = config.getProperty("spaces.name");
+        final String secret = config.getProperty("spaces.secret");
+        final String key = config.getProperty("spaces.key");
+        S3AsyncClient spaces = S3AsyncClient.builder()
+                .endpointOverride(endpoint)
+                .credentialsProvider(
+                        StaticCredentialsProvider.create(
+                                AwsBasicCredentials.create(key, secret)))
+                .build();
+
+        MongoCollection<Manual> collection = mongodb.getCollection("manuals", Manual.class);
+
+        identityNos.parallelStream().forEach(identityNo -> {
+            logger.info("Migrating manual for ID {}", identityNo);
+            try (Connection c = MySQLDataSource.getConnection(); PreparedStatement p = c.prepareStatement("SELECT manual FROM manuals WHERE record_locator = ?;")) {
+                p.setInt(identityNo, 1);
+                ResultSet r = p.executeQuery();
+                InputStream is = r.next() ? r.getBinaryStream("receipt") : null;
+                if (is != null) {
+                    Pair<File, String> fileNamePair = generateFile(is, manualNames, ".pdf");
+                    File manual = fileNamePair.getLeft();
+                    String manualName = fileNamePair.getRight();
+                    spaces.putObject(PutObjectRequest.builder().bucket(String.format("%s/manuals", spaceName)).key(manualName).build(), AsyncRequestBody.fromFile(manual));
+                    collection.insertOne(new Manual(identityNo, false, manualName));
+                    manual.delete();
+                    is.close();
+                }
+                r.close();
+            } catch (SQLException | IOException e) {
+                logger.error(String.format("ERROR ON IDENTITY NO %d", identityNo), e);
+                e.printStackTrace();
+            }
+        });
+
+        logger.info("[END MIGRATION] Manuals");
+    }
+
+    private static void migrateLabs() throws SQLException, InterruptedException {
         ArrayList<edu.andrews.cas.physics.inventory.model.mysql.LabCourses> labCourses = new ArrayList<>();
 
-        Connection con = 
+        Connection con = MySQLDataSource.getConnection();
+        if (!con.isValid(30)) throw new SQLException("Unable to connect to database.");
+        logger.info("Connection established successfully!");
+        Thread.sleep(4000);
+        logger.info("[START MIGRATION] Labs");
+        logger.info("Retrieving lab courses...");
+
+        PreparedStatement retrieveLabCourses = con.prepareStatement("SELECT * FROM lab_courses;");
+        ResultSet resultSet = retrieveLabCourses.executeQuery();
+
+        while (resultSet.next()) {
+            labCourses.add(new edu.andrews.cas.physics.inventory.model.mysql.LabCourses(resultSet.getInt("id"), resultSet.getString("course_name"), resultSet.getString("course_number")));
+        }
+
+        resultSet.close();
+        retrieveLabCourses.close();
+        con.close();
+
+        MongoCollection<Group> collection = mongodb.getCollection("labs", Group.class);
+
+        // TODO IMPLEMENT REST OF LABS MIGRATION
     }
 
     private static void migrateGroups() throws SQLException, InterruptedException {
@@ -136,7 +212,7 @@ public class Migration {
         retrieveGroups.close();
         con.close();
 
-        MongoCollection<Group> collection = db.getCollection("groups", Group.class);
+        MongoCollection<Group> collection = mongodb.getCollection("groups", Group.class);
 
         groups.parallelStream().forEach(g -> {
             logger.info("Migrating Group ID {}", g.id());
@@ -188,7 +264,7 @@ public class Migration {
         retrieveSets.close();
         con.close();
 
-        MongoCollection<Set> collection = db.getCollection("sets", Set.class);
+        MongoCollection<edu.andrews.cas.physics.inventory.model.mongodb.set.Set> collection = mongodb.getCollection("sets", edu.andrews.cas.physics.inventory.model.mongodb.set.Set.class);
 
         sets.parallelStream().forEach(s -> {
             logger.info("Migrating Set ID {}", s.id());
@@ -197,7 +273,7 @@ public class Migration {
                  PreparedStatement p2 = c.prepareStatement("SELECT asset_record_number FROM set_records WHERE set_id = ?;");
                  PreparedStatement p3 = c.prepareStatement("SELECT collection_group_id FROM set_records WHERE set_id = ?;")) {
 
-                Set set = new Set(s.id(), s.name());
+                edu.andrews.cas.physics.inventory.model.mongodb.set.Set set = new edu.andrews.cas.physics.inventory.model.mongodb.set.Set(s.id(), s.name());
 
                 p1.setInt(1, s.id());
                 p2.setInt(1, s.id());
@@ -227,8 +303,8 @@ public class Migration {
     }
 
     private static void migrateImagesAndReceipts() throws InterruptedException, SQLException, IOException, URISyntaxException {
-        HashSet<String> receiptNames = new HashSet<>();
-        HashSet<String> imageNames = new HashSet<>();
+        Set<String> receiptNames = Collections.synchronizedSet(new HashSet<>());
+        Set<String> imageNames = Collections.synchronizedSet(new HashSet<>());
         ArrayList<Integer> ids = new ArrayList<>();
 
         Connection con = MySQLDataSource.getConnection();
@@ -346,7 +422,7 @@ public class Migration {
        logger.info("[END SERIALIZATION] Images and Receipts");
     }
 
-    private static void migrateImageHelper(HashSet<String> imageNames, String spaceName, S3AsyncClient spaces, List<String> imgs, InputStream is) throws IOException {
+    private static void migrateImageHelper(Set<String> imageNames, String spaceName, S3AsyncClient spaces, List<String> imgs, InputStream is) throws IOException {
         if (is != null) {
             Pair<File, String> fileNamePair = generateFile(is, imageNames, null);
             File image = fileNamePair.getLeft();
@@ -360,14 +436,14 @@ public class Migration {
 
     private static void readInputStreamToFile(@NonNull InputStream imageIS, File image) throws IOException {
         FileOutputStream os = new FileOutputStream(image);
-        int read = 0;
+        int read;
         byte[] bytes = new byte[1024];
         while ((read = imageIS.read(bytes)) != -1) os.write(bytes, 0, read);
         os.close();
         imageIS.close();
     }
 
-    private static Pair<File, String> generateFile(@NonNull InputStream is, @NonNull HashSet<String> set, String fileExt) throws IOException {
+    private static Pair<File, String> generateFile(@NonNull InputStream is, @NonNull Set<String> set, String fileExt) throws IOException {
         String filename;
         do {
             filename = RandomStringUtils.randomAlphanumeric(8, 20);
@@ -381,7 +457,7 @@ public class Migration {
         return new ImmutablePair<>(file, filename);
     }
 
-    public static void migrateAssets() throws IOException, SQLException, InterruptedException {
+    public static void migrateAssets() throws SQLException, InterruptedException {
         Connection con = MySQLDataSource.getConnection();
         if (!con.isValid(30)) throw new SQLException("Unable to connect to database.");
         logger.info("Connection established successfully!");
@@ -402,7 +478,8 @@ public class Migration {
         retrieveIDs.close();
         con.close();
 
-        MongoCollection<Asset> collection = db.getCollection("assets", Asset.class);
+        MongoCollection<Asset> assetsCollection = mongodb.getCollection("assets", Asset.class);
+        MongoCollection<Manual> manualsCollection = mongodb.getCollection("manuals", Manual.class);
 
         ids.parallelStream().forEach(id -> {
             logger.info("Migrating ID {}", id);
@@ -415,6 +492,7 @@ public class Migration {
                 Integer identityNo = e.getRecord_locator() != -1 ? e.getRecord_locator() : null;
                 String AUInventoryNo = e.getAu_inventory();
                 boolean isConsumable = false;
+                boolean hardCopyManualAvailable = e.getHard_copy_available() == 1;
 
                 String brand = e.getBrand();
                 String model = e.getModel();
@@ -434,7 +512,7 @@ public class Migration {
 
                 Quantity totalQuantity = purchaseQuantity;
 
-                Quantity quantityMissing = parseQuantity(e.getMissing());
+                Quantity quantityMissing = parseQuantity(e.getQuantity_missing());
                 MissingReport missingReport = new MissingReport(quantityMissing, e.getDate_reported_missing(), e.getReported_missing_by());
                 AccountabilityReports accountabilityReports = new AccountabilityReports();
                 accountabilityReports.setQuantityMissing(quantityMissing);
@@ -459,7 +537,9 @@ public class Migration {
                 String notes = e.getNotes();
 
                 Asset asset = new Asset(id, name, location, keywords, imgs, identityNo, AUInventoryNo, isConsumable, mfrInfo, purchases, totalQuantity, accountabilityReports, maintenanceRecord, notes);
-                collection.insertOne(asset);
+                assetsCollection.insertOne(asset);
+                if (hardCopyManualAvailable)
+                    manualsCollection.findOneAndUpdate(eq("identityNo", identityNo), Updates.set("hardcopy", true));
                 logger.info("Finished migration of Asset #{}", id);
             } catch (SQLException e) {
                 logger.error(String.format("ERROR ON ID %d", id), e);

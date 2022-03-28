@@ -71,7 +71,7 @@ public class AccountabilityReports {
     }
 
     public void addMissingReport(MissingReport missingReport) {
-        this.missingReports.add(missingReport);
+        if (missingReport.quantityMissing().getValue() > 0) this.missingReports.add(missingReport);
     }
 
     public void addRecoveryReport(RecoveryReport recoveryReport) {
