@@ -1,5 +1,14 @@
 package edu.andrews.cas.physics.migration;
 
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.client.builder.AwsClientBuilder;
+import com.amazonaws.regions.Regions;
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.AmazonS3Client;
+import com.amazonaws.services.s3.model.CannedAccessControlList;
+import com.amazonaws.services.s3.model.ObjectMetadata;
+import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.beust.jcommander.JCommander;
 import com.mongodb.client.model.Updates;
 import com.mongodb.reactivestreams.client.MongoClient;
@@ -10,6 +19,11 @@ import edu.andrews.cas.physics.inventory.model.mongodb.accountability.Accountabi
 import edu.andrews.cas.physics.inventory.model.mongodb.accountability.MissingReport;
 import edu.andrews.cas.physics.inventory.model.mongodb.asset.*;
 import edu.andrews.cas.physics.inventory.model.mongodb.group.Group;
+import edu.andrews.cas.physics.inventory.model.mongodb.lab.Lab;
+import edu.andrews.cas.physics.inventory.model.mongodb.lab.LabCourse;
+import edu.andrews.cas.physics.inventory.model.mongodb.lab.resource.LabResource;
+import edu.andrews.cas.physics.inventory.model.mongodb.lab.resource.Quantities;
+import edu.andrews.cas.physics.inventory.model.mongodb.lab.resource.ResourceType;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.CalibrationDetails;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.MaintenanceEvent;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.MaintenanceRecord;
@@ -20,27 +34,20 @@ import edu.andrews.cas.physics.measurement.Quantity;
 import edu.andrews.cas.physics.measurement.Unit;
 import edu.andrews.cas.physics.migration.database.MongoDBDataSource;
 import edu.andrews.cas.physics.migration.database.MySQLDataSource;
+import edu.andrews.cas.physics.mime.MimeTypes;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
-import org.apache.commons.lang3.tuple.ImmutablePair;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.async.AsyncRequestBody;
-import software.amazon.awssdk.services.s3.S3AsyncClient;
-import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
 import java.io.*;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.sql.Date;
 import java.sql.*;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 
 import static com.mongodb.client.model.Filters.eq;
 
@@ -48,12 +55,14 @@ import static com.mongodb.client.model.Filters.eq;
 public class Migration {
     private static final Properties config = new Properties();
     private static final Logger logger = LogManager.getLogger();
-    private static final String receiptsFilePath = String.format(".%s%sreceipts.map", System.getProperty("user.home"), File.separator);
-    private static final String imagesFilePath = String.format(".%s%simages.map", System.getProperty("user.home"), File.separator);
+    private static final String receiptsFilePath = String.format("%s%s.receipts.map", System.getProperty("user.home"), File.separator);
+    private static final String imagesFilePath = String.format("%s%s.images.map", System.getProperty("user.home"), File.separator);
 
     private static ConcurrentHashMap<Integer, String> receipts = new ConcurrentHashMap<>();
     private static ConcurrentHashMap<Integer, List<String>> images = new ConcurrentHashMap<>();
     private static MongoDatabase mongodb;
+    private static AmazonS3 spaces;
+    private static String spaceName;
 
     public static void main(String[] argv) throws Exception {
         Args args = new Args();
@@ -80,6 +89,14 @@ public class Migration {
         Thread.sleep(1000);
         System.out.println("........");
 
+        String endpoint = config.getProperty("spaces.endpoint");
+        final String secret = config.getProperty("spaces.secret");
+        final String key = config.getProperty("spaces.key");
+        spaceName = config.getProperty("spaces.name");
+        spaces = AmazonS3Client.builder()
+                .withEndpointConfiguration(new AwsClientBuilder.EndpointConfiguration(endpoint, Regions.US_EAST_1.getName()))
+                .withCredentials(new AWSStaticCredentialsProvider(new BasicAWSCredentials(key, secret)))
+                .build();
 
         File receiptsFile = new File(args.getReceiptsPath() == null ? receiptsFilePath : args.getReceiptsPath());
         File imagesFile = new File(args.getImagesPath() == null ? imagesFilePath : args.getImagesPath());
@@ -103,9 +120,11 @@ public class Migration {
         migrateSets();
         migrateGroups();
         migrateLabs();
+        receiptsFile.deleteOnExit();
+        imagesFile.deleteOnExit();
     }
 
-    private static void migrateManuals() throws SQLException, InterruptedException, URISyntaxException {
+    private static void migrateManuals() throws SQLException, InterruptedException {
         Set<String> manualNames = Collections.synchronizedSet(new HashSet<>());
         ArrayList<Integer> identityNos = new ArrayList<>();
 
@@ -120,37 +139,28 @@ public class Migration {
         ResultSet resultSet = retrieveIdentityNos.executeQuery();
 
         while (resultSet.next()) {
-            identityNos.add(resultSet.getInt("id"));
+            identityNos.add(resultSet.getInt("record_locator"));
         }
 
         resultSet.close();
         retrieveIdentityNos.close();
         con.close();
 
-        URI endpoint = new URI(config.getProperty("spaces.endpoint"));
-        final String spaceName = config.getProperty("spaces.name");
-        final String secret = config.getProperty("spaces.secret");
-        final String key = config.getProperty("spaces.key");
-        S3AsyncClient spaces = S3AsyncClient.builder()
-                .endpointOverride(endpoint)
-                .credentialsProvider(
-                        StaticCredentialsProvider.create(
-                                AwsBasicCredentials.create(key, secret)))
-                .build();
-
         MongoCollection<Manual> collection = mongodb.getCollection("manuals", Manual.class);
 
-        identityNos.parallelStream().forEach(identityNo -> {
+        identityNos.forEach(identityNo -> {
             logger.info("Migrating manual for ID {}", identityNo);
             try (Connection c = MySQLDataSource.getConnection(); PreparedStatement p = c.prepareStatement("SELECT manual FROM manuals WHERE record_locator = ?;")) {
-                p.setInt(identityNo, 1);
+                p.setInt(1, identityNo);
                 ResultSet r = p.executeQuery();
-                InputStream is = r.next() ? r.getBinaryStream("receipt") : null;
+                InputStream is = r.next() ? r.getBinaryStream("manual") : null;
                 if (is != null) {
-                    Pair<File, String> fileNamePair = generateFile(is, manualNames, ".pdf");
-                    File manual = fileNamePair.getLeft();
-                    String manualName = fileNamePair.getRight();
-                    spaces.putObject(PutObjectRequest.builder().bucket(String.format("%s/manuals", spaceName)).key(manualName).build(), AsyncRequestBody.fromFile(manual));
+                    MigrationFile migrationFile = generateFile(is, manualNames);
+                    File manual = migrationFile.file();
+                    String manualName = migrationFile.filename();
+                    ObjectMetadata metadata = new ObjectMetadata();
+                    metadata.setContentType(migrationFile.mediaType());
+                    spaces.putObject(new PutObjectRequest(String.format("%s/manuals", spaceName), manualName, manual).withCannedAcl(CannedAccessControlList.PublicRead));
                     collection.insertOne(new Manual(identityNo, false, manualName));
                     manual.delete();
                     is.close();
@@ -186,9 +196,57 @@ public class Migration {
         retrieveLabCourses.close();
         con.close();
 
-        MongoCollection<Group> collection = mongodb.getCollection("labs", Group.class);
+        MongoCollection<LabCourse> collection = mongodb.getCollection("labs", LabCourse.class);
 
-        // TODO IMPLEMENT REST OF LABS MIGRATION
+        labCourses.parallelStream().forEach(lc -> {
+            logger.info("Migrating Lab Course {}", lc.courseNumber());
+            LabCourse labCourse = new LabCourse(lc.courseName(), lc.courseNumber(), null);
+            try {
+                Connection c = MySQLDataSource.getConnection();
+                PreparedStatement p1 = c.prepareStatement("SELECT * FROM labs WHERE lab_course_number = ?;");
+
+                p1.setInt(1, lc.id());
+                ResultSet r1 = p1.executeQuery();
+
+                while (r1.next()) {
+                    labCourse.addLab(new Lab(r1.getInt("id"), r1.getString("lab_name")));
+                }
+                r1.close();
+                p1.close();
+                c.close();
+
+                labCourse.getLabs().parallelStream().forEach(lab -> {
+                    logger.info("Migrating Lab {} for Lab Course {}", lab.getName(), lc.courseNumber());
+                    try (Connection c2 = MySQLDataSource.getConnection(); PreparedStatement p2 = c2.prepareStatement("SELECT * FROM lab_data WHERE lab_id = ?;")) {
+                        p2.setInt(1, lab.getId());
+                        ResultSet r2 = p2.executeQuery();
+
+                        while (r2.next()) {
+                            ResourceType type = switch (r2.getInt("type")) {
+                                case 0 -> ResourceType.ASSET;
+                                case 1 -> ResourceType.SET;
+                                case 2 -> ResourceType.GROUP;
+                                default -> throw new IllegalArgumentException("Unexpected type " + r2.getInt("type"));
+                            };
+                            int typeId = r2.getInt("type_id");
+                            Quantities quantities = new Quantities(parseQuantity(r2.getString("quantity_on_front_table")), parseQuantity(r2.getString("quantity_per_station")));
+                            String notes = r2.getString("notes");
+                            lab.addResource(new LabResource(type, typeId, quantities, notes));
+                        }
+
+                        r2.close();
+                    } catch (SQLException e) {
+                        logger.error(String.format("Error on Lab ID %s", lab.getId()), e);
+                    }
+                });
+            } catch (SQLException e) {
+                logger.error(String.format("Error on Lab Course %s", lc.courseNumber()), e);
+            }
+
+            collection.insertOne(labCourse);
+            logger.info("Finished migrating Lab Course {}", lc.courseNumber());
+        });
+        logger.info("[END MIGRATION] Labs");
     }
 
     private static void migrateGroups() throws SQLException, InterruptedException {
@@ -302,7 +360,7 @@ public class Migration {
         });
     }
 
-    private static void migrateImagesAndReceipts() throws InterruptedException, SQLException, IOException, URISyntaxException {
+    private static void migrateImagesAndReceipts() throws InterruptedException, SQLException, IOException {
         Set<String> receiptNames = Collections.synchronizedSet(new HashSet<>());
         Set<String> imageNames = Collections.synchronizedSet(new HashSet<>());
         ArrayList<Integer> ids = new ArrayList<>();
@@ -325,18 +383,7 @@ public class Migration {
         retrieveIDs.close();
         con.close();
 
-        URI endpoint = new URI(config.getProperty("spaces.endpoint"));
-        final String spaceName = config.getProperty("spaces.name");
-        final String secret = config.getProperty("spaces.secret");
-        final String key = config.getProperty("spaces.key");
-        S3AsyncClient spaces = S3AsyncClient.builder()
-                .endpointOverride(endpoint)
-                .credentialsProvider(
-                        StaticCredentialsProvider.create(
-                                AwsBasicCredentials.create(key, secret)))
-                .build();
-
-        ids.parallelStream().forEach(id -> {
+        ids.forEach(id -> {
             logger.info("Migrating ID {}", id);
             try (Connection c = MySQLDataSource.getConnection();
                  PreparedStatement p1 = c.prepareStatement("SELECT receipt FROM images_and_receipts WHERE id = ?;");
@@ -345,21 +392,23 @@ public class Migration {
                  PreparedStatement p4 = c.prepareStatement("SELECT image_three FROM images_and_receipts WHERE id = ?;");
                  PreparedStatement p5 = c.prepareStatement("SELECT image_four FROM images_and_receipts WHERE id = ?;")) {
 
-                p1.setInt(id, 1);
-                p2.setInt(id, 1);
-                p3.setInt(id, 1);
-                p4.setInt(id, 1);
-                p5.setInt(id, 1);
+                p1.setInt(1, id);
+                p2.setInt(1, id);
+                p3.setInt(1, id);
+                p4.setInt(1, id);
+                p5.setInt(1, id);
 
                 ResultSet r1 = p1.executeQuery();
                 InputStream is1 = r1.next() ? r1.getBinaryStream("receipt") : null;
 
                 logger.info("Migrating receipt for ID {}", id);
                 if (is1 != null) {
-                    Pair<File, String> fileNamePair = generateFile(is1, receiptNames, ".pdf");
-                    File receipt = fileNamePair.getLeft();
-                    String receiptName = fileNamePair.getRight();
-                    spaces.putObject(PutObjectRequest.builder().bucket(String.format("%s/receipts", spaceName)).key(receiptName).build(), AsyncRequestBody.fromFile(receipt));
+                    MigrationFile migrationFile = generateFile(is1, receiptNames);
+                    File receipt = migrationFile.file();
+                    String receiptName = migrationFile.filename();
+                    ObjectMetadata metadata = new ObjectMetadata();
+                    metadata.setContentType(migrationFile.mediaType());
+                    spaces.putObject(new PutObjectRequest(String.format("%s/receipts", spaceName), receiptName, receipt).withCannedAcl(CannedAccessControlList.PublicRead).withMetadata(metadata));
                     receipts.put(id, receiptName);
                     receipt.delete();
                     is1.close();
@@ -394,7 +443,10 @@ public class Migration {
 
                 images.put(id, imgs);
             } catch (SQLException | IOException e) {
-                logger.error(String.format("ERROR ON ID %d", id), e);
+                logger.error(String.format("ERROR ON ID %d", id), e.getMessage());
+                e.printStackTrace();
+                System.err.println(e.getMessage());
+            } catch (ExecutionException | InterruptedException e) {
                 e.printStackTrace();
             }
         });
@@ -418,16 +470,18 @@ public class Migration {
         oos.close();
         fos.close();
 
-       logger.info("Images successfully serialized to {}", imagesFile.getAbsolutePath());
-       logger.info("[END SERIALIZATION] Images and Receipts");
+        logger.info("Images successfully serialized to {}", imagesFile.getAbsolutePath());
+        logger.info("[END SERIALIZATION] Images and Receipts");
     }
 
-    private static void migrateImageHelper(Set<String> imageNames, String spaceName, S3AsyncClient spaces, List<String> imgs, InputStream is) throws IOException {
+    private static void migrateImageHelper(Set<String> imageNames, String spaceName, AmazonS3 spaces, List<String> imgs, InputStream is) throws IOException, ExecutionException, InterruptedException {
         if (is != null) {
-            Pair<File, String> fileNamePair = generateFile(is, imageNames, null);
-            File image = fileNamePair.getLeft();
-            String imageName = fileNamePair.getRight();
-            spaces.putObject(PutObjectRequest.builder().bucket(String.format("%s/images", spaceName)).key(imageName).build(), AsyncRequestBody.fromFile(image));
+            MigrationFile migrationFile = generateFile(is, imageNames);
+            File image = migrationFile.file();
+            String imageName = migrationFile.filename();
+            ObjectMetadata metadata = new ObjectMetadata();
+            metadata.setContentType(migrationFile.mediaType());
+            spaces.putObject(new PutObjectRequest(String.format("%s/images", spaceName), imageName, image).withCannedAcl(CannedAccessControlList.PublicRead).withMetadata(metadata));
             imgs.add(imageName);
             image.delete();
             is.close();
@@ -443,21 +497,44 @@ public class Migration {
         imageIS.close();
     }
 
-    private static Pair<File, String> generateFile(@NonNull InputStream is, @NonNull Set<String> set, String fileExt) throws IOException {
+    private static MigrationFile generateFile(@NonNull InputStream is, @NonNull Set<String> set) throws IOException {
         String filename;
         do {
             filename = RandomStringUtils.randomAlphanumeric(8, 20);
         } while (set.contains(filename));
         set.add(filename);
 
-        File file = File.createTempFile(filename, fileExt);
+        File file = File.createTempFile(filename, null);
+        String mediaType = getMimeType(is);
         readInputStreamToFile(is, file);
 
-        if (fileExt != null) filename = filename.concat(fileExt);
-        return new ImmutablePair<>(file, filename);
+        return new MigrationFile(file, filename, mediaType);
     }
 
-    public static void migrateAssets() throws SQLException, InterruptedException {
+    private static String getMimeType(@NonNull InputStream is) throws IOException {
+        is.mark(16);
+        byte[] bytes = new byte[16];
+
+        int totalRead = 0;
+
+        int lastRead = is.read(bytes);
+        while (lastRead != -1) {
+            totalRead += lastRead;
+            if (totalRead == bytes.length) {
+                break;
+            }
+            lastRead = is.read(bytes, totalRead, bytes.length - totalRead);
+        }
+
+        byte[] shorter = new byte[totalRead];
+        System.arraycopy(bytes, 0, shorter, 0, totalRead);
+
+        is.reset();
+
+        return MimeTypes.detect(shorter);
+    }
+
+    private static void migrateAssets() throws SQLException, InterruptedException {
         Connection con = MySQLDataSource.getConnection();
         if (!con.isValid(30)) throw new SQLException("Unable to connect to database.");
         logger.info("Connection established successfully!");
@@ -481,7 +558,7 @@ public class Migration {
         MongoCollection<Asset> assetsCollection = mongodb.getCollection("assets", Asset.class);
         MongoCollection<Manual> manualsCollection = mongodb.getCollection("manuals", Manual.class);
 
-        ids.parallelStream().forEach(id -> {
+        ids.forEach(id -> {
             logger.info("Migrating ID {}", id);
             try {
                 Equipment e = fetchEquipment(id);
@@ -558,6 +635,7 @@ public class Migration {
         p.setInt(1, id);
 
         ResultSet r = p.executeQuery();
+        r.next();
 
         Equipment e = new Equipment();
         e.setId(r.getInt("id"));
@@ -637,6 +715,7 @@ public class Migration {
     }
 
     private static double parsePrice(String s) {
+        if (s.isBlank()) return 0.00;
         try {
             return Double.parseDouble(s.replaceAll("\\$", "").strip());
         } catch (NumberFormatException e) {
@@ -652,7 +731,7 @@ public class Migration {
             double value = Double.parseDouble(s.split("[^0-9.]+")[0]);
             Unit unit = parseUnit(s.substring(String.valueOf(value).length()));
             return new Quantity(value, unit);
-        } catch (NumberFormatException e) {
+        } catch (NumberFormatException | StringIndexOutOfBoundsException e) {
             Scanner scanner = new Scanner(System.in);
             System.out.printf("Unable to parse quantity: %s\n", s);
             System.out.print("Enter value: ");
@@ -674,4 +753,7 @@ public class Migration {
             return Unit.lookup(scanner.nextLine());
         }
     }
+}
+
+record MigrationFile(File file, String filename, String mediaType) {
 }

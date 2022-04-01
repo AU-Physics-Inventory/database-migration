@@ -4,4 +4,8 @@ public class OperationOnQuantitiesException extends Exception {
     public OperationOnQuantitiesException(ReflectiveOperationException e) {
         super();
     }
+
+    public OperationOnQuantitiesException(String s) {
+        super(s);
+    }
 }

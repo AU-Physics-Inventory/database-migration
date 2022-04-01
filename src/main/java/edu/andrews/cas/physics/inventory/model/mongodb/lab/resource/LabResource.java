@@ -2,11 +2,15 @@ package edu.andrews.cas.physics.inventory.model.mongodb.lab.resource;
 
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.bson.codecs.pojo.annotations.BsonProperty;
 
 public class LabResource {
     private final ResourceType type;
+
+    @BsonProperty("typeID")
     private final int id;
-    private final Quantities quantities;
+
+    private Quantities quantities;
     private final String notes;
 
     public LabResource(ResourceType type, int id, Quantities quantities) {
@@ -37,6 +41,10 @@ public class LabResource {
 
     public String getNotes() {
         return notes;
+    }
+
+    public void setQuantities(Quantities quantities) {
+        this.quantities = quantities;
     }
 
     @Override
