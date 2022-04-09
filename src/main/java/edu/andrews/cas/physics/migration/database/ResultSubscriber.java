@@ -11,14 +11,14 @@ public class ResultSubscriber<T> implements Subscriber<T> {
 
     @Override
     public void onSubscribe(Subscription s) {
-        logger.info("Received subscription: {}", s);
+        logger.debug("Received subscription: {}", s);
         this.subscription = s;
         s.request(1);
     }
 
     @Override
     public void onNext(T t) {
-        logger.info("Successfully received result: {}", t);
+        logger.debug("Successfully received result: {}", t);
         this.subscription.request(1);
     }
 
@@ -31,6 +31,6 @@ public class ResultSubscriber<T> implements Subscriber<T> {
 
     @Override
     public void onComplete() {
-        logger.error("Subscription complete: {}", this.subscription);
+        logger.debug("Subscription complete: {}", this.subscription);
     }
 }
