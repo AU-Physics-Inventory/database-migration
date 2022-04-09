@@ -1,13 +1,14 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.lab;
 
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import edu.andrews.cas.physics.inventory.model.mongodb.lab.resource.LabResource;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonIgnore;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class Lab {
-    @BsonIgnore
+public class Lab implements DocumentConversion {
     private final int id;
     private final String name;
     private final List<LabResource> resources;
@@ -38,5 +39,12 @@ public class Lab {
 
     public int getId() {
         return id;
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("name", getName())
+                .append("resources", getResources().stream().map(LabResource::toDocument).toList());
     }
 }

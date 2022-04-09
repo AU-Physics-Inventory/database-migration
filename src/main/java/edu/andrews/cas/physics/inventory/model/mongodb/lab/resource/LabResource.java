@@ -1,15 +1,14 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.lab.resource;
 
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 
-public class LabResource {
+public class LabResource implements DocumentConversion {
     private final ResourceType type;
-
-    @BsonProperty("typeID")
     private final int id;
-
     private Quantities quantities;
     private final String notes;
 
@@ -45,6 +44,19 @@ public class LabResource {
 
     public void setQuantities(Quantities quantities) {
         this.quantities = quantities;
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("type", switch (getType()) {
+                    case ASSET -> "asset";
+                    case SET -> "set";
+                    case GROUP -> "group";
+                })
+                .append("typeID", getID())
+                .append("quantities", getQuantities().toDocument())
+                .append("notes", getNotes());
     }
 
     @Override

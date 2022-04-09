@@ -1,22 +1,20 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.accountability;
 
 import edu.andrews.cas.physics.exception.OperationOnQuantitiesException;
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import edu.andrews.cas.physics.inventory.model.mongodb.asset.Asset;
 import edu.andrews.cas.physics.measurement.Quantity;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonIgnore;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class AccountabilityReports {
-    @BsonIgnore
+public class AccountabilityReports implements DocumentConversion {
     private final Asset asset;
-
     private final List<MissingReport> missingReports;
     private final List<RecoveryReport> recoveryReports;
-
-    @BsonProperty("quantity")
     private Quantity quantityMissing;
 
     public AccountabilityReports() {
@@ -80,5 +78,19 @@ public class AccountabilityReports {
 
     public void setQuantityMissing(Quantity quantityMissing) {
         this.quantityMissing = quantityMissing;
+    }
+
+    @Override
+    public Document toDocument() {
+        Document d = new Document();
+        try {
+            d.put("missingReports", getMissingReports().stream().map(MissingReport::toDocument).toList());
+            d.put("recoveryReports", getRecoveryReports().stream().map(RecoveryReport::toDocument).toList());
+            d.put("quantity", getQuantityMissing().toDocument());
+        } catch (OperationOnQuantitiesException e) {
+            e.printStackTrace();
+            d.put("quantity", null);
+        }
+        return d;
     }
 }

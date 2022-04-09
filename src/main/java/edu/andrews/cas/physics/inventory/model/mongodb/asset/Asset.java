@@ -1,8 +1,10 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.asset;
 
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import edu.andrews.cas.physics.inventory.model.mongodb.accountability.AccountabilityReports;
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.MaintenanceRecord;
 import edu.andrews.cas.physics.measurement.Quantity;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonId;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 
@@ -10,36 +12,20 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
-public class Asset {
-
-    @BsonId
+public class Asset implements DocumentConversion {
     private final int _id;
-
     private final String name;
-
     private final String location;
-
     private final List<String> keywords;
-
     private final List<String> images;
-
     private final Integer identityNo;
-
     private final String AUInventoryNo;
-
     private final boolean isConsumable;
-
-    @BsonProperty("mfrInfo")
     private final ManufacturerInfo manufacturerInfo;
-
     private final List<AssetPurchase> purchases;
-
     private final Quantity totalQuantity;
-
     private final AccountabilityReports accountabilityReports;
-
     private final MaintenanceRecord maintenanceRecord;
-
     private final String notes;
 
     public Asset(int id, String name, String location, Integer identityNo, String AUInventoryNo,
@@ -146,5 +132,24 @@ public class Asset {
 
     public void addImage(String img) {
         if (!this.images.contains(img)) images.add(img);
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("_id", get_id())
+                .append("name", getName())
+                .append("location", getLocation())
+                .append("keywords", getKeywords())
+                .append("mfrInfo", getManufacturerInfo().toDocument())
+                .append("AUInventoryNo", getAUInventoryNo())
+                .append("purchases", getPurchases().stream().map(AssetPurchase::toDocument).toList())
+                .append("totalQuantity", getTotalQuantity().toDocument())
+                .append("accountabilityReports", getAccountabilityReports().toDocument())
+                .append("identityNo", getIdentityNo())
+                .append("notes", getNotes())
+                .append("maintenanceRecord", getMaintenanceRecord().toDocument())
+                .append("isConsumable", isConsumable())
+                .append("images", getImages());
     }
 }

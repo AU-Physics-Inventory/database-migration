@@ -34,18 +34,24 @@ import edu.andrews.cas.physics.measurement.Quantity;
 import edu.andrews.cas.physics.measurement.Unit;
 import edu.andrews.cas.physics.migration.database.MongoDBDataSource;
 import edu.andrews.cas.physics.migration.database.MySQLDataSource;
+import edu.andrews.cas.physics.migration.parsing.ParseHelper;
 import edu.andrews.cas.physics.mime.MimeTypes;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.bson.*;
 
 import java.io.*;
 import java.sql.Date;
 import java.sql.*;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 
@@ -57,12 +63,21 @@ public class Migration {
     private static final Logger logger = LogManager.getLogger();
     private static final String receiptsFilePath = String.format("%s%s.receipts.map", System.getProperty("user.home"), File.separator);
     private static final String imagesFilePath = String.format("%s%s.images.map", System.getProperty("user.home"), File.separator);
+    private static final String manualsFilePath = String.format("%s%s.manuals.txt", System.getProperty("user.home"), File.separator);
+    private static final ParseHelper parseHelper = ParseHelper.getInstance();
+    private static final ArrayList<String> dateFormats;
 
     private static ConcurrentHashMap<Integer, String> receipts = new ConcurrentHashMap<>();
     private static ConcurrentHashMap<Integer, List<String>> images = new ConcurrentHashMap<>();
     private static MongoDatabase mongodb;
     private static AmazonS3 spaces;
     private static String spaceName;
+
+    static {
+        dateFormats = new ArrayList<>();
+        dateFormats.add("dd-MMM-yyyy");
+        dateFormats.add("yyyy-MM-dd");
+    }
 
     public static void main(String[] argv) throws Exception {
         Args args = new Args();
@@ -100,6 +115,7 @@ public class Migration {
 
         File receiptsFile = new File(args.getReceiptsPath() == null ? receiptsFilePath : args.getReceiptsPath());
         File imagesFile = new File(args.getImagesPath() == null ? imagesFilePath : args.getImagesPath());
+        File manualsFile = new File(manualsFilePath);
 
         if (!receiptsFile.exists() || !imagesFile.exists()) migrateImagesAndReceipts();
         else {
@@ -115,16 +131,17 @@ public class Migration {
             ois.close();
             fis.close();
         }
-        migrateManuals();
+        if (!manualsFile.exists()) migrateManuals();
         migrateAssets();
         migrateSets();
         migrateGroups();
         migrateLabs();
         receiptsFile.deleteOnExit();
         imagesFile.deleteOnExit();
+        manualsFile.deleteOnExit();
     }
 
-    private static void migrateManuals() throws SQLException, InterruptedException {
+    private static void migrateManuals() throws SQLException, InterruptedException, IOException {
         Set<String> manualNames = Collections.synchronizedSet(new HashSet<>());
         ArrayList<Integer> identityNos = new ArrayList<>();
 
@@ -146,7 +163,7 @@ public class Migration {
         retrieveIdentityNos.close();
         con.close();
 
-        MongoCollection<Manual> collection = mongodb.getCollection("manuals", Manual.class);
+        MongoCollection<Document> collection = mongodb.getCollection("manuals");
 
         identityNos.forEach(identityNo -> {
             logger.info("Migrating manual for ID {}", identityNo);
@@ -160,8 +177,9 @@ public class Migration {
                     String manualName = migrationFile.filename();
                     ObjectMetadata metadata = new ObjectMetadata();
                     metadata.setContentType(migrationFile.mediaType());
-                    spaces.putObject(new PutObjectRequest(String.format("%s/manuals", spaceName), manualName, manual).withCannedAcl(CannedAccessControlList.PublicRead));
-                    collection.insertOne(new Manual(identityNo, false, manualName));
+                    spaces.putObject(new PutObjectRequest(String.format("%s/manuals", spaceName), manualName, manual).withCannedAcl(CannedAccessControlList.PublicRead).withMetadata(metadata));
+                    Manual m = new Manual(identityNo, false, manualName);
+                    collection.insertOne(m.toDocument());
                     manual.delete();
                     is.close();
                 }
@@ -171,6 +189,9 @@ public class Migration {
                 e.printStackTrace();
             }
         });
+
+        File file = new File(manualsFilePath);
+        file.createNewFile();
 
         logger.info("[END MIGRATION] Manuals");
     }
@@ -196,7 +217,7 @@ public class Migration {
         retrieveLabCourses.close();
         con.close();
 
-        MongoCollection<LabCourse> collection = mongodb.getCollection("labs", LabCourse.class);
+        MongoCollection<Document> collection = mongodb.getCollection("labs");
 
         labCourses.parallelStream().forEach(lc -> {
             logger.info("Migrating Lab Course {}", lc.courseNumber());
@@ -229,13 +250,13 @@ public class Migration {
                                 default -> throw new IllegalArgumentException("Unexpected type " + r2.getInt("type"));
                             };
                             int typeId = r2.getInt("type_id");
-                            Quantities quantities = new Quantities(parseQuantity(r2.getString("quantity_on_front_table")), parseQuantity(r2.getString("quantity_per_station")));
+                            Quantities quantities = new Quantities(parseQuantity(r2.getString("quantity_on_front_table"), "Lab", String.format("%s - %s", labCourse.getNumber(), lab.getName())), parseQuantity(r2.getString("quantity_per_station"), "Lab", String.format("%s - %s", labCourse.getNumber(), lab.getName())));
                             String notes = r2.getString("notes");
                             lab.addResource(new LabResource(type, typeId, quantities, notes));
                         }
 
                         r2.close();
-                    } catch (SQLException e) {
+                    } catch (SQLException | ExecutionException | InterruptedException e) {
                         logger.error(String.format("Error on Lab ID %s", lab.getId()), e);
                     }
                 });
@@ -243,7 +264,7 @@ public class Migration {
                 logger.error(String.format("Error on Lab Course %s", lc.courseNumber()), e);
             }
 
-            collection.insertOne(labCourse);
+            collection.insertOne(labCourse.toDocument());
             logger.info("Finished migrating Lab Course {}", lc.courseNumber());
         });
         logger.info("[END MIGRATION] Labs");
@@ -270,7 +291,7 @@ public class Migration {
         retrieveGroups.close();
         con.close();
 
-        MongoCollection<Group> collection = mongodb.getCollection("groups", Group.class);
+        MongoCollection<Document> collection = mongodb.getCollection("groups");
 
         groups.parallelStream().forEach(g -> {
             logger.info("Migrating Group ID {}", g.id());
@@ -293,7 +314,7 @@ public class Migration {
                 while (r2.next()) group.addIdentityNo(r2.getInt("asset_record_number"));
                 r2.close();
 
-                collection.insertOne(group);
+                collection.insertOne(group.toDocument());
             } catch (SQLException e) {
                 logger.error(String.format("Error on Group ID %s", g.id()), e);
             }
@@ -322,7 +343,7 @@ public class Migration {
         retrieveSets.close();
         con.close();
 
-        MongoCollection<edu.andrews.cas.physics.inventory.model.mongodb.set.Set> collection = mongodb.getCollection("sets", edu.andrews.cas.physics.inventory.model.mongodb.set.Set.class);
+        MongoCollection<Document> collection = mongodb.getCollection("sets");
 
         sets.parallelStream().forEach(s -> {
             logger.info("Migrating Set ID {}", s.id());
@@ -352,7 +373,7 @@ public class Migration {
                 while (r3.next()) set.addGroup(r3.getInt("collection_group_id"));
                 r3.close();
 
-                collection.insertOne(set);
+                collection.insertOne(set.toDocument());
             } catch (SQLException e) {
                 logger.error(String.format("Error on Set ID %s", s.id()), e);
             }
@@ -534,7 +555,7 @@ public class Migration {
         return MimeTypes.detect(shorter);
     }
 
-    private static void migrateAssets() throws SQLException, InterruptedException {
+    private static void migrateAssets() throws Exception {
         Connection con = MySQLDataSource.getConnection();
         if (!con.isValid(30)) throw new SQLException("Unable to connect to database.");
         logger.info("Connection established successfully!");
@@ -555,10 +576,10 @@ public class Migration {
         retrieveIDs.close();
         con.close();
 
-        MongoCollection<Asset> assetsCollection = mongodb.getCollection("assets", Asset.class);
-        MongoCollection<Manual> manualsCollection = mongodb.getCollection("manuals", Manual.class);
+        MongoCollection<Document> assetsCollection = mongodb.getCollection("assets");
+        MongoCollection<Document> manualsCollection = mongodb.getCollection("manuals");
 
-        ids.forEach(id -> {
+        ids.parallelStream().forEach(id -> {
             logger.info("Migrating ID {}", id);
             try {
                 Equipment e = fetchEquipment(id);
@@ -579,9 +600,9 @@ public class Migration {
 
                 Vendor vendor = e.getVendor() == null ? null : new Vendor(e.getVendor(), null);
                 LocalDate purchaseDate = e.getPurchase_date();
-                double cost = parsePrice(e.getPurchase_amount());
-                double unitPrice = parsePrice(e.getUnit_price());
-                Quantity purchaseQuantity = parseQuantity(e.getQuantity());
+                double cost = parsePrice(e.getPurchase_amount(), "Asset", String.valueOf(id));
+                double unitPrice = parsePrice(e.getUnit_price(), "Asset", String.valueOf(id));
+                Quantity purchaseQuantity = parseQuantity(e.getQuantity(), "Asset", String.valueOf(id));
                 String receipt = receipts.get(e.getId());
                 AssetPurchase purchase = new AssetPurchase(vendor, purchaseDate, cost, unitPrice, purchaseQuantity, null, receipt);
                 List<AssetPurchase> purchases = new ArrayList<>();
@@ -589,7 +610,7 @@ public class Migration {
 
                 Quantity totalQuantity = purchaseQuantity;
 
-                Quantity quantityMissing = parseQuantity(e.getQuantity_missing());
+                Quantity quantityMissing = parseQuantity(e.getQuantity_missing(), "Asset", String.valueOf(id));
                 MissingReport missingReport = new MissingReport(quantityMissing, e.getDate_reported_missing(), e.getReported_missing_by());
                 AccountabilityReports accountabilityReports = new AccountabilityReports();
                 accountabilityReports.setQuantityMissing(quantityMissing);
@@ -602,10 +623,13 @@ public class Migration {
                     List<MaintenanceEvent> history = Arrays.stream(m.getStatus_history().split(";")).map(s -> {
                         String[] split = s.split(":");
                         Status status = Status.lookup(split[0].strip());
-                        LocalDate date = LocalDate.parse(split[1].strip());
+                        LocalDate date = parseDate(split[1].strip());
                         return new MaintenanceEvent(status, date);
                     }).toList();
-                    List<LocalDate> calibrationHistory = Arrays.stream(m.getCalibration_history().split(";")).map(LocalDate::parse).toList();
+                    List<LocalDate> calibrationHistory;
+                    if (m.getCalibration_history() != null)
+                        calibrationHistory = Arrays.stream(m.getCalibration_history().split(";")).map(LocalDate::parse).toList();
+                    else calibrationHistory = new ArrayList<>();
                     CalibrationDetails details = new CalibrationDetails(m.getNext_calibration_date(), m.getLast_calibration_date(), null, calibrationHistory);
                     String notes = m.getNotes();
                     maintenanceRecord = new MaintenanceRecord(currentStatus, history, details, notes);
@@ -614,17 +638,34 @@ public class Migration {
                 String notes = e.getNotes();
 
                 Asset asset = new Asset(id, name, location, keywords, imgs, identityNo, AUInventoryNo, isConsumable, mfrInfo, purchases, totalQuantity, accountabilityReports, maintenanceRecord, notes);
-                assetsCollection.insertOne(asset);
+                assetsCollection.insertOne(asset.toDocument());
                 if (hardCopyManualAvailable)
                     manualsCollection.findOneAndUpdate(eq("identityNo", identityNo), Updates.set("hardcopy", true));
                 logger.info("Finished migration of Asset #{}", id);
-            } catch (SQLException e) {
+            } catch (SQLException | ExecutionException | InterruptedException e) {
                 logger.error(String.format("ERROR ON ID %d", id), e);
                 e.printStackTrace();
             }
-
-            logger.info("[END MIGRATION] Assets");
         });
+        logger.info("[END MIGRATION] Assets");
+        parseHelper.stop();
+    }
+
+    private static LocalDate parseDate(String s) throws RuntimeException {
+        LocalDate d = parseDateHelper(s, 0);
+        if (d == null) throw new RuntimeException(String.format("Unable to parse date %s", s));
+        return d;
+    }
+
+    private static LocalDate parseDateHelper(String s, int format) {
+        if (format > dateFormats.size()) return null;
+        else {
+            try {
+                return LocalDate.parse(s, DateTimeFormatter.ofPattern(dateFormats.get(format)));
+            } catch (DateTimeParseException e) {
+                return parseDateHelper(s, ++format);
+            }
+        }
     }
 
     private static Equipment fetchEquipment(@NonNull Integer id) throws SQLException {
@@ -714,43 +755,34 @@ public class Migration {
         return m;
     }
 
-    private static double parsePrice(String s) {
+    private static double parsePrice(String s, String objectName, String identifier) throws ExecutionException, InterruptedException {
         if (s.isBlank()) return 0.00;
         try {
-            return Double.parseDouble(s.replaceAll("\\$", "").strip());
+            return Double.parseDouble(s.replaceAll("[\\$,]", "").strip());
         } catch (NumberFormatException e) {
-            Scanner scanner = new Scanner(System.in);
-            System.out.printf("Unable to parse double: %s\n", s);
-            System.out.print("Enter double: ");
-            return scanner.nextDouble();
+            if (!parseHelper.isStageShowing()) parseHelper.showStage();
+            CompletableFuture<Double> doubleCompletableFuture = parseHelper.parsePrice(s, objectName, identifier);
+            if (parseHelper.isPollingStopped()) parseHelper.startPolling();
+            return doubleCompletableFuture.get();
         }
     }
 
-    private static Quantity parseQuantity(String s) {
+    private static Quantity parseQuantity(String s, String objectName, String identifier) throws ExecutionException, InterruptedException {
         try {
-            double value = Double.parseDouble(s.split("[^0-9.]+")[0]);
-            Unit unit = parseUnit(s.substring(String.valueOf(value).length()));
+            if (s == null || s.isBlank()) return new Quantity(0, Unit.UNITS);
+            if (s.toLowerCase().contains("many") || s.toLowerCase().contains("various") || s.toLowerCase().contains("varying") || s.toLowerCase().contains("lot")) return new Quantity(9999, Unit.UNITS);
+            if (StringUtils.isAlpha(s)) throw new Exception(); // trigger parse helper
+            String numSplit = s.split("[^0-9.]+")[0];
+            double value = Double.parseDouble(numSplit.replaceAll(",", ""));
+            String substr = s.substring(numSplit.length()).strip();
+            if (substr.equalsIgnoreCase("cans")) return new Quantity(value, Unit.UNITS);
+            Unit unit = substr.isBlank() ? Unit.UNITS : Unit.lookup(substr);
             return new Quantity(value, unit);
-        } catch (NumberFormatException | StringIndexOutOfBoundsException e) {
-            Scanner scanner = new Scanner(System.in);
-            System.out.printf("Unable to parse quantity: %s\n", s);
-            System.out.print("Enter value: ");
-            double value = scanner.nextDouble();
-            System.out.print("Enter units: ");
-            Unit unit = Unit.lookup(scanner.nextLine());
-            return new Quantity(value, unit);
-        }
-    }
-
-    private static Unit parseUnit(String s) {
-        try {
-            if (s.isBlank()) return Unit.UNITS;
-            return Unit.lookup(s);
-        } catch (IllegalArgumentException e) {
-            Scanner scanner = new Scanner(System.in);
-            System.out.println(e.getMessage());
-            System.out.print("Enter units: ");
-            return Unit.lookup(scanner.nextLine());
+        } catch (Exception e) {
+            if (!parseHelper.isStageShowing()) parseHelper.showStage();
+            CompletableFuture<Quantity> quantityCompletableFuture = parseHelper.parseQuantity(s, objectName, identifier);
+            if (parseHelper.isPollingStopped()) parseHelper.startPolling();
+            return quantityCompletableFuture.get();
         }
     }
 }

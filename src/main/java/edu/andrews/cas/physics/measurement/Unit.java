@@ -27,7 +27,7 @@ public enum Unit {
     CUBIC_MILLIMETERS("cu mm", Volume.class),
     CUBIC_CENTIMETERS("cu cm", Volume.class),
     CUBIC_METERS("cu m", Volume.class),
-    CUPS("c", Volume.class),
+    CUPS("cup", Volume.class),
     FLUID_OUNCES("fl oz", Volume.class),
     GALLONS("gal", Volume.class),
     LITERS("L", Volume.class),
@@ -65,5 +65,10 @@ public enum Unit {
 
     public Class<?> getMeasurementClass() {
         return measurementClass;
+    }
+
+    @Override
+    public String toString() {
+        return getSymbol();
     }
 }

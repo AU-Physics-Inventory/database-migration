@@ -2,3 +2,4 @@ src/main/resources/config.properties
 .idea
 target/
 *.log
+src/main/java/edu/andrews/cas/physics/migration/FakeSpace.java

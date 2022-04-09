@@ -1,18 +1,16 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.maintenance;
 
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import lombok.NonNull;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 
 import java.time.LocalDate;
 import java.util.List;
 
-public class CalibrationDetails {
-    @BsonProperty("next")
+public class CalibrationDetails implements DocumentConversion {
     private LocalDate nextDate;
-
-    @BsonProperty("last")
     private LocalDate lastDate;
-
     private Long interval;
     private final List<LocalDate> history;
 
@@ -55,5 +53,14 @@ public class CalibrationDetails {
         if (interval != null && interval < 0)
             throw new IllegalArgumentException("Calibration interval may not be a negative value");
         else this.interval = interval;
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("next", getNextDate())
+                .append("last", getLastDate())
+                .append("interval", getInterval())
+                .append("history", getHistory());
     }
 }

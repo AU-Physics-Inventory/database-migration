@@ -1,11 +1,12 @@
 package edu.andrews.cas.physics.measurement;
 
 import edu.andrews.cas.physics.exception.OperationOnQuantitiesException;
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import lombok.NonNull;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 
-public class Quantity {
-    @BsonProperty("amount")
+public class Quantity implements DocumentConversion {
     private final double value;
     private final Unit unit;
 
@@ -105,5 +106,12 @@ public class Quantity {
 
     public static boolean compareUnits(@NonNull Quantity q1, @NonNull Quantity q2) {
         return q1.getUnit().equals(q2.getUnit());
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("amount", getValue())
+                .append("unit", getUnit().toString());
     }
 }

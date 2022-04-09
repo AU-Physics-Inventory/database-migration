@@ -1,13 +1,16 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.asset;
 
-public final class Manual {
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
+import org.bson.Document;
+
+public final class Manual implements DocumentConversion {
     private int identityNo;
-    private boolean hasHardcopy;
+    private boolean hardcopyAvailable;
     private String softcopy;
 
     public Manual(int identityNo, boolean hasHardcopy, String softcopy) {
         this.identityNo = identityNo;
-        this.hasHardcopy = hasHardcopy;
+        this.hardcopyAvailable = hasHardcopy;
         this.softcopy = softcopy;
     }
 
@@ -19,12 +22,12 @@ public final class Manual {
         this.identityNo = identityNo;
     }
 
-    public boolean isHasHardcopy() {
-        return hasHardcopy;
+    public boolean isHardcopyAvailable() {
+        return hardcopyAvailable;
     }
 
-    public void setHasHardcopy(boolean hasHardcopy) {
-        this.hasHardcopy = hasHardcopy;
+    public void setHardcopyAvailable(boolean hardcopyAvailable) {
+        this.hardcopyAvailable = hardcopyAvailable;
     }
 
     public String getSoftcopy() {
@@ -33,5 +36,13 @@ public final class Manual {
 
     public void setSoftcopy(String softcopy) {
         this.softcopy = softcopy;
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("identityNo", getIdentityNo())
+                .append("hardcopy", isHardcopyAvailable())
+                .append("softcopy", getSoftcopy());
     }
 }

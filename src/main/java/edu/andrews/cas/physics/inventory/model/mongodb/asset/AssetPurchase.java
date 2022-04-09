@@ -1,25 +1,21 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.asset;
 
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import edu.andrews.cas.physics.measurement.Quantity;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.bson.Document;
 
 import java.net.URL;
 import java.time.LocalDate;
 
-public class AssetPurchase {
+public class AssetPurchase implements DocumentConversion {
     private final Vendor vendor;
-
     private final LocalDate date;
-
     private final double cost;
-
     private final double unitPrice;
-
     private final Quantity quantity;
-
     private final URL url;
-
     private final String receipt;
 
     public AssetPurchase(Vendor vendor, LocalDate date, double cost, double unitPrice, Quantity quantity) {
@@ -68,6 +64,18 @@ public class AssetPurchase {
 
     public String getReceipt() {
         return receipt;
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("vendor", getVendor().toDocument())
+                .append("date", getDate())
+                .append("cost", getCost())
+                .append("unitPrice", getUnitPrice())
+                .append("quantity", getQuantity().toDocument())
+                .append("url", getUrl())
+                .append("receipt", getReceipt());
     }
 
     @Override

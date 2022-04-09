@@ -1,12 +1,13 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.set;
 
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonId;
 
 import java.util.ArrayList;
 import java.util.List;
 
-public class Set {
-    @BsonId
+public class Set implements DocumentConversion {
     private final int _id;
     private final String name;
     private final List<Integer> assets;
@@ -59,5 +60,15 @@ public class Set {
 
     public void addGroup(int id) {
         if (!this.groups.contains(id)) this.groups.add(id);
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("_id", get_id())
+                .append("name", getName())
+                .append("assets", getAssets())
+                .append("identityNos", getIdentityNos())
+                .append("groups", getGroups());
     }
 }

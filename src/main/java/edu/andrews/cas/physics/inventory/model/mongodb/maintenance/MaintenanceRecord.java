@@ -1,6 +1,8 @@
 package edu.andrews.cas.physics.inventory.model.mongodb.maintenance;
 
+import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import edu.andrews.cas.physics.inventory.model.mongodb.asset.Asset;
+import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonIgnore;
 import org.bson.codecs.pojo.annotations.BsonProperty;
 
@@ -8,8 +10,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
-public class MaintenanceRecord {
-    @BsonIgnore
+public class MaintenanceRecord implements DocumentConversion {
     private final Asset asset;
     private MaintenanceEvent currentStatus;
     private final List<MaintenanceEvent> history;
@@ -42,6 +43,14 @@ public class MaintenanceRecord {
         this.calibrationDetails = calibrationDetails;
     }
 
+    public MaintenanceEvent getCurrentStatus() {
+        return currentStatus;
+    }
+
+    public List<MaintenanceEvent> getHistory() {
+        return history;
+    }
+
     public CalibrationDetails getCalibrationDetails() {
         return calibrationDetails;
     }
@@ -65,5 +74,14 @@ public class MaintenanceRecord {
 
     public void addCalibrationEvent(LocalDate eventDate, LocalDate nextDate) {
         this.calibrationDetails.addEvent(eventDate, nextDate);
+    }
+
+    @Override
+    public Document toDocument() {
+        return new Document()
+                .append("currentStatus", getCurrentStatus().toDocument())
+                .append("history", getHistory().stream().map(MaintenanceEvent::toDocument).toList())
+                .append("calibration", getCalibrationDetails().toDocument())
+                .append("notes", getNotes());
     }
 }
