@@ -11,6 +11,7 @@ import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.beust.jcommander.JCommander;
 import com.mongodb.client.model.Updates;
+import com.mongodb.client.result.InsertOneResult;
 import com.mongodb.reactivestreams.client.MongoClient;
 import com.mongodb.reactivestreams.client.MongoCollection;
 import com.mongodb.reactivestreams.client.MongoDatabase;
@@ -34,6 +35,7 @@ import edu.andrews.cas.physics.measurement.Quantity;
 import edu.andrews.cas.physics.measurement.Unit;
 import edu.andrews.cas.physics.migration.database.MongoDBDataSource;
 import edu.andrews.cas.physics.migration.database.MySQLDataSource;
+import edu.andrews.cas.physics.migration.database.ResultSubscriber;
 import edu.andrews.cas.physics.migration.parsing.ParseHelper;
 import edu.andrews.cas.physics.mime.MimeTypes;
 import lombok.NonNull;
@@ -43,6 +45,8 @@ import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.bson.*;
+import org.reactivestreams.Subscriber;
+import org.reactivestreams.Subscription;
 
 import java.io.*;
 import java.sql.Date;
@@ -179,7 +183,7 @@ public class Migration {
                     metadata.setContentType(migrationFile.mediaType());
                     spaces.putObject(new PutObjectRequest(String.format("%s/manuals", spaceName), manualName, manual).withCannedAcl(CannedAccessControlList.PublicRead).withMetadata(metadata));
                     Manual m = new Manual(identityNo, false, manualName);
-                    collection.insertOne(m.toDocument());
+                    collection.insertOne(m.toDocument()).subscribe(new ResultSubscriber<>());
                     manual.delete();
                     is.close();
                 }
@@ -264,7 +268,7 @@ public class Migration {
                 logger.error(String.format("Error on Lab Course %s", lc.courseNumber()), e);
             }
 
-            collection.insertOne(labCourse.toDocument());
+            collection.insertOne(labCourse.toDocument()).subscribe(new ResultSubscriber<>());
             logger.info("Finished migrating Lab Course {}", lc.courseNumber());
         });
         logger.info("[END MIGRATION] Labs");
@@ -314,7 +318,7 @@ public class Migration {
                 while (r2.next()) group.addIdentityNo(r2.getInt("asset_record_number"));
                 r2.close();
 
-                collection.insertOne(group.toDocument());
+                collection.insertOne(group.toDocument()).subscribe(new ResultSubscriber<>());
             } catch (SQLException e) {
                 logger.error(String.format("Error on Group ID %s", g.id()), e);
             }
@@ -373,7 +377,7 @@ public class Migration {
                 while (r3.next()) set.addGroup(r3.getInt("collection_group_id"));
                 r3.close();
 
-                collection.insertOne(set.toDocument());
+                collection.insertOne(set.toDocument()).subscribe(new ResultSubscriber<>());
             } catch (SQLException e) {
                 logger.error(String.format("Error on Set ID %s", s.id()), e);
             }
@@ -638,9 +642,9 @@ public class Migration {
                 String notes = e.getNotes();
 
                 Asset asset = new Asset(id, name, location, keywords, imgs, identityNo, AUInventoryNo, isConsumable, mfrInfo, purchases, totalQuantity, accountabilityReports, maintenanceRecord, notes);
-                assetsCollection.insertOne(asset.toDocument());
+                assetsCollection.insertOne(asset.toDocument()).subscribe(new ResultSubscriber<>());
                 if (hardCopyManualAvailable)
-                    manualsCollection.findOneAndUpdate(eq("identityNo", identityNo), Updates.set("hardcopy", true));
+                    manualsCollection.findOneAndUpdate(eq("identityNo", identityNo), Updates.set("hardcopy", true)).subscribe(new ResultSubscriber<>());
                 logger.info("Finished migration of Asset #{}", id);
             } catch (SQLException | ExecutionException | InterruptedException e) {
                 logger.error(String.format("ERROR ON ID %d", id), e);
