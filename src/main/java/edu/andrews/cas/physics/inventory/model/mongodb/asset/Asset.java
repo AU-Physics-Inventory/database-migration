@@ -61,6 +61,7 @@ public class Asset implements DocumentConversion {
         this.purchases = purchases;
         this.totalQuantity = totalQuantity;
         this.accountabilityReports = accountabilityReports;
+        this.accountabilityReports.setAsset(this);
         this.maintenanceRecord = maintenanceRecord;
         this.notes = notes;
         this.images = images;

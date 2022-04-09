@@ -12,7 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class AccountabilityReports implements DocumentConversion {
-    private final Asset asset;
+    private Asset asset;
     private final List<MissingReport> missingReports;
     private final List<RecoveryReport> recoveryReports;
     private Quantity quantityMissing;
@@ -78,6 +78,10 @@ public class AccountabilityReports implements DocumentConversion {
 
     public void setQuantityMissing(Quantity quantityMissing) {
         this.quantityMissing = quantityMissing;
+    }
+
+    public void setAsset(Asset asset) {
+        this.asset = asset;
     }
 
     @Override
