@@ -23,8 +23,7 @@ public enum Status {
             case "C", "Out for calibration" -> CALIBRATION;
             case "R", "Out for repair" -> REPAIR;
             case "T", "Out for testing" -> TESTING;
-            case "U", "Unknown" -> UNKNOWN;
-            default -> throw new IllegalArgumentException(String.format("Could not find status code: %s", s));
+            default -> UNKNOWN;
         };
     }
 

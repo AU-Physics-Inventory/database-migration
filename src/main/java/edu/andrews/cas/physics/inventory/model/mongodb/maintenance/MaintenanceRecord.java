@@ -2,6 +2,7 @@ package edu.andrews.cas.physics.inventory.model.mongodb.maintenance;
 
 import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import edu.andrews.cas.physics.inventory.model.mongodb.asset.Asset;
+import lombok.NonNull;
 import org.bson.Document;
 import org.bson.codecs.pojo.annotations.BsonIgnore;
 import org.bson.codecs.pojo.annotations.BsonProperty;
@@ -11,6 +12,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class MaintenanceRecord implements DocumentConversion {
+    private static final MaintenanceEvent UNKNOWN_EVENT = new MaintenanceEvent(Status.UNKNOWN, LocalDate.EPOCH);
+
     private final Asset asset;
     private MaintenanceEvent currentStatus;
     private final List<MaintenanceEvent> history;
@@ -21,15 +24,17 @@ public class MaintenanceRecord implements DocumentConversion {
         this.asset = null;
         this.history = new ArrayList<>();
         this.calibrationDetails = new CalibrationDetails(null, null, null, null);
+        this.currentStatus = UNKNOWN_EVENT;
     }
 
     public MaintenanceRecord(Asset asset) {
         this.asset = asset;
         this.history = new ArrayList<>();
         this.calibrationDetails = new CalibrationDetails(null, null, null, null);
+        this.currentStatus = UNKNOWN_EVENT;
     }
 
-    public MaintenanceRecord(MaintenanceEvent currentStatus, List<MaintenanceEvent> history, CalibrationDetails calibrationDetails, String notes) {
+    public MaintenanceRecord(@NonNull MaintenanceEvent currentStatus, List<MaintenanceEvent> history, CalibrationDetails calibrationDetails, String notes) {
         this.asset = null;
         this.currentStatus = currentStatus;
         this.history = history;
@@ -41,6 +46,7 @@ public class MaintenanceRecord implements DocumentConversion {
         this.asset = asset;
         this.history = history;
         this.calibrationDetails = calibrationDetails;
+        this.currentStatus = UNKNOWN_EVENT;
     }
 
     public MaintenanceEvent getCurrentStatus() {
@@ -64,7 +70,7 @@ public class MaintenanceRecord implements DocumentConversion {
     }
 
     public void changeStatus(MaintenanceEvent newStatus) {
-        if (this.currentStatus != null) history.add(this.currentStatus);
+        if (!this.currentStatus.equals(UNKNOWN_EVENT)) history.add(this.currentStatus);
         this.currentStatus = newStatus;
     }
 
