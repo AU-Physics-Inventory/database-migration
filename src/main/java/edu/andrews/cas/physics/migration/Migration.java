@@ -143,6 +143,8 @@ public class Migration {
         receiptsFile.deleteOnExit();
         imagesFile.deleteOnExit();
         manualsFile.deleteOnExit();
+        parseHelper.stop();
+        parseHelper.exit(); // TODO TEST APPLICATION TERMINATES
     }
 
     private static void migrateManuals() throws SQLException, InterruptedException, IOException {
@@ -774,12 +776,27 @@ public class Migration {
     private static Quantity parseQuantity(String s, String objectName, String identifier) throws ExecutionException, InterruptedException {
         try {
             if (s == null || s.isBlank()) return new Quantity(0, Unit.UNITS);
-            if (s.toLowerCase().contains("many") || s.toLowerCase().contains("various") || s.toLowerCase().contains("varying") || s.toLowerCase().contains("lot") || s.toLowerCase().contains("misc")) return new Quantity(9999, Unit.UNITS);
+
+            s = s.toLowerCase().strip();
+
+            if (s.contains("many")
+                    || s.contains("various")
+                    || s.contains("varying")
+                    || s.contains("lot")
+                    || s.contains("misc"))
+                return new Quantity(9999, Unit.UNITS);
+
             if (StringUtils.isAlpha(s)) throw new Exception(); // trigger parse helper
             String numSplit = s.replaceAll(",", "").split("[^0-9.]+")[0];
             double value = Double.parseDouble(numSplit);
             String substr = s.substring(numSplit.length()).strip();
-            if (substr.equalsIgnoreCase("cans")) return new Quantity(value, Unit.UNITS);
+
+            if (substr.contains("can")
+                    || substr.contains("roll")
+                    || substr.contains("tube")
+                    || substr.contains("box"))
+                return new Quantity(value, Unit.UNITS);
+
             Unit unit = substr.isBlank() ? Unit.UNITS : Unit.lookup(substr);
             return new Quantity(value, unit);
         } catch (Exception e) {

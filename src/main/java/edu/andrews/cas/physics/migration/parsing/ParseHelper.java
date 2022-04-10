@@ -175,8 +175,12 @@ public class ParseHelper extends Application {
     }
 
     @Override
-    public void stop() throws Exception {
+    public void stop() {
         this.hideStage();
         this.stopPolling = true;
+    }
+
+    public void exit() {
+        Platform.exit();
     }
 }
