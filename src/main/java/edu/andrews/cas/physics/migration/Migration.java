@@ -774,10 +774,10 @@ public class Migration {
     private static Quantity parseQuantity(String s, String objectName, String identifier) throws ExecutionException, InterruptedException {
         try {
             if (s == null || s.isBlank()) return new Quantity(0, Unit.UNITS);
-            if (s.toLowerCase().contains("many") || s.toLowerCase().contains("various") || s.toLowerCase().contains("varying") || s.toLowerCase().contains("lot")) return new Quantity(9999, Unit.UNITS);
+            if (s.toLowerCase().contains("many") || s.toLowerCase().contains("various") || s.toLowerCase().contains("varying") || s.toLowerCase().contains("lot") || s.toLowerCase().contains("misc")) return new Quantity(9999, Unit.UNITS);
             if (StringUtils.isAlpha(s)) throw new Exception(); // trigger parse helper
-            String numSplit = s.split("[^0-9.]+")[0];
-            double value = Double.parseDouble(numSplit.replaceAll(",", ""));
+            String numSplit = s.replaceAll(",", "").split("[^0-9.]+")[0];
+            double value = Double.parseDouble(numSplit);
             String substr = s.substring(numSplit.length()).strip();
             if (substr.equalsIgnoreCase("cans")) return new Quantity(value, Unit.UNITS);
             Unit unit = substr.isBlank() ? Unit.UNITS : Unit.lookup(substr);
