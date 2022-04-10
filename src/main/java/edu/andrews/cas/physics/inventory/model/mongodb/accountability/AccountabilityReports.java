@@ -54,7 +54,8 @@ public class AccountabilityReports implements DocumentConversion {
     }
 
     public Quantity getQuantityMissing() throws OperationOnQuantitiesException {
-        return calculateQuantityMissing();
+        //return calculateQuantityMissing(); TODO ENABLE THIS AFTER APP IS DEPLOYED IN PRODUCTION
+        return this.quantityMissing;
     }
 
     public Quantity calculateQuantityMissing() throws OperationOnQuantitiesException {
