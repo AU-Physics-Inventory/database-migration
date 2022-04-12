@@ -1,26 +1,14 @@
 package edu.andrews.cas.physics.migration.database;
 
-import com.mongodb.*;
-import com.mongodb.connection.ClusterSettings;
-import com.mongodb.connection.ClusterType;
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
 import com.mongodb.reactivestreams.client.MongoClient;
 import com.mongodb.reactivestreams.client.MongoClients;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.bson.*;
-import org.bson.codecs.configuration.CodecRegistry;
-import org.bson.codecs.pojo.Convention;
-import org.bson.codecs.pojo.PojoCodecProvider;
-import org.reactivestreams.Publisher;
-import org.reactivestreams.Subscriber;
 
-import javax.net.ssl.SSLContext;
 import java.io.IOException;
-import java.security.NoSuchAlgorithmException;
 import java.util.Properties;
-
-import static org.bson.codecs.configuration.CodecRegistries.fromProviders;
-import static org.bson.codecs.configuration.CodecRegistries.fromRegistries;
 
 public class MongoDBDataSource {
     private static final Logger logger = LogManager.getLogger();
@@ -56,7 +44,8 @@ public class MongoDBDataSource {
         }
     }
 
-    private MongoDBDataSource() {}
+    private MongoDBDataSource() {
+    }
 
     public static MongoClient getClient() {
         return client;
