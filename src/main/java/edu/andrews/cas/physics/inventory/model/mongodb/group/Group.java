@@ -2,32 +2,30 @@ package edu.andrews.cas.physics.inventory.model.mongodb.group;
 
 import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import org.bson.Document;
-import org.bson.codecs.pojo.annotations.BsonId;
+import org.bson.types.ObjectId;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class Group implements DocumentConversion {
-    private final int _id;
+    private final ObjectId _id = null;
     private final String name;
-    private final List<Integer> assets;
+    private final List<ObjectId> assets;
     private final List<Integer> identityNos;
 
-    public Group(int id, String name) {
-        this._id = id;
+    public Group(String name) {
         this.name = name;
         this.assets = new ArrayList<>();
         this.identityNos = new ArrayList<>();
     }
 
-    public Group(int id, String name, List<Integer> assets, List<Integer> identityNos) {
-        this._id = id;
+    public Group(String name, List<ObjectId> assets, List<Integer> identityNos) {
         this.name = name;
         this.assets = assets;
         this.identityNos = identityNos;
     }
 
-    public int get_id() {
+    public ObjectId get_id() {
         return _id;
     }
 
@@ -35,7 +33,7 @@ public class Group implements DocumentConversion {
         return name;
     }
 
-    public List<Integer> getAssets() {
+    public List<ObjectId> getAssets() {
         return assets;
     }
 
@@ -43,7 +41,7 @@ public class Group implements DocumentConversion {
         return identityNos;
     }
 
-    public void addAsset(int id) {
+    public void addAsset(ObjectId id) {
         if (!this.assets.contains(id)) this.assets.add(id);
     }
 
@@ -54,7 +52,6 @@ public class Group implements DocumentConversion {
     @Override
     public Document toDocument() {
         return new Document()
-                .append("_id", get_id())
                 .append("name", getName())
                 .append("assets", getAssets())
                 .append("identityNos", getIdentityNos());

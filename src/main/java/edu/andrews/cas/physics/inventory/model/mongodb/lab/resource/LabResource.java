@@ -4,22 +4,22 @@ import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import org.apache.commons.lang3.builder.EqualsBuilder;
 import org.apache.commons.lang3.builder.HashCodeBuilder;
 import org.bson.Document;
-import org.bson.codecs.pojo.annotations.BsonProperty;
+import org.bson.types.ObjectId;
 
 public class LabResource implements DocumentConversion {
     private final ResourceType type;
-    private final int id;
+    private final ObjectId id;
     private Quantities quantities;
     private final String notes;
 
-    public LabResource(ResourceType type, int id, Quantities quantities) {
+    public LabResource(ResourceType type, ObjectId id, Quantities quantities) {
         this.type = type;
         this.id = id;
         this.quantities = quantities;
         this.notes = null;
     }
 
-    public LabResource(ResourceType type, int id, Quantities quantities, String notes) {
+    public LabResource(ResourceType type, ObjectId id, Quantities quantities, String notes) {
         this.type = type;
         this.id = id;
         this.quantities = quantities;
@@ -30,7 +30,7 @@ public class LabResource implements DocumentConversion {
         return type;
     }
 
-    public int getID() {
+    public ObjectId getID() {
         return id;
     }
 

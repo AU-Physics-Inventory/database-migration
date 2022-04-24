@@ -2,35 +2,33 @@ package edu.andrews.cas.physics.inventory.model.mongodb.set;
 
 import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import org.bson.Document;
-import org.bson.codecs.pojo.annotations.BsonId;
+import org.bson.types.ObjectId;
 
 import java.util.ArrayList;
 import java.util.List;
 
 public class Set implements DocumentConversion {
-    private final int _id;
+    private final ObjectId _id = null;
     private final String name;
-    private final List<Integer> assets;
+    private final List<ObjectId> assets;
     private final List<Integer> identityNos;
-    private final List<Integer> groups;
+    private final List<ObjectId> groups;
 
     public Set(int id, String name) {
-        this._id = id;
         this.name = name;
         this.assets = new ArrayList<>();
         this.identityNos = new ArrayList<>();
         this.groups = new ArrayList<>();
     }
 
-    public Set(int id, String name, List<Integer> assets, List<Integer> identityNos, List<Integer> groups) {
-        this._id = id;
+    public Set(String name, List<ObjectId> assets, List<Integer> identityNos, List<ObjectId> groups) {
         this.name = name;
         this.assets = assets;
         this.identityNos = identityNos;
         this.groups = groups;
     }
 
-    public int get_id() {
+    public ObjectId get_id() {
         return _id;
     }
 
@@ -38,7 +36,7 @@ public class Set implements DocumentConversion {
         return name;
     }
 
-    public List<Integer> getAssets() {
+    public List<ObjectId> getAssets() {
         return assets;
     }
 
@@ -46,11 +44,11 @@ public class Set implements DocumentConversion {
         return identityNos;
     }
 
-    public List<Integer> getGroups() {
+    public List<ObjectId> getGroups() {
         return groups;
     }
 
-    public void addAsset(int id) {
+    public void addAsset(ObjectId id) {
         if (!this.assets.contains(id)) this.assets.add(id);
     }
 
@@ -58,14 +56,13 @@ public class Set implements DocumentConversion {
         if (!this.identityNos.contains(identityNo)) this.identityNos.add(identityNo);
     }
 
-    public void addGroup(int id) {
+    public void addGroup(ObjectId id) {
         if (!this.groups.contains(id)) this.groups.add(id);
     }
 
     @Override
     public Document toDocument() {
         return new Document()
-                .append("_id", get_id())
                 .append("name", getName())
                 .append("assets", getAssets())
                 .append("identityNos", getIdentityNos())

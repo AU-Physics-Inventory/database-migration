@@ -5,40 +5,38 @@ import edu.andrews.cas.physics.inventory.model.mongodb.accountability.Accountabi
 import edu.andrews.cas.physics.inventory.model.mongodb.maintenance.MaintenanceRecord;
 import edu.andrews.cas.physics.measurement.Quantity;
 import org.bson.Document;
-import org.bson.codecs.pojo.annotations.BsonId;
-import org.bson.codecs.pojo.annotations.BsonProperty;
+import org.bson.types.ObjectId;
 
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 
 public class Asset implements DocumentConversion {
-    private final int _id;
+    private final ObjectId _id;
     private final String name;
     private final String location;
     private final List<String> keywords;
     private final List<String> images;
     private final Integer identityNo;
     private final String AUInventoryNo;
-    private final boolean isConsumable;
+    private final boolean consumable;
     private final ManufacturerInfo manufacturerInfo;
     private final List<AssetPurchase> purchases;
-    private final Quantity totalQuantity;
+    private final Quantity quantity;
     private final AccountabilityReports accountabilityReports;
     private final MaintenanceRecord maintenanceRecord;
     private final String notes;
 
-    public Asset(int id, String name, String location, Integer identityNo, String AUInventoryNo,
-                 boolean isConsumable, ManufacturerInfo manufacturerInfo, Quantity totalQuantity, MaintenanceRecord maintenanceRecord, String notes) {
-        _id = id;
+    public Asset(String name, String location, Integer identityNo, String AUInventoryNo,
+                 boolean consumable, ManufacturerInfo manufacturerInfo, Quantity quantity, MaintenanceRecord maintenanceRecord, String notes) {
+        _id = null;
         this.name = name;
         this.location = location;
         this.keywords = new ArrayList<>();
         this.identityNo = identityNo;
         this.AUInventoryNo = AUInventoryNo;
-        this.isConsumable = isConsumable;
+        this.consumable = consumable;
         this.manufacturerInfo = manufacturerInfo;
-        this.totalQuantity = totalQuantity;
+        this.quantity = quantity;
         this.accountabilityReports = new AccountabilityReports();
         this.maintenanceRecord = maintenanceRecord;
         this.notes = notes;
@@ -46,20 +44,20 @@ public class Asset implements DocumentConversion {
         this.images = new ArrayList<>();
     }
 
-    public Asset(int id, String name, String location, List<String> keywords, List<String> images, Integer identityNo, String AUInventoryNo,
-                 boolean isConsumable, ManufacturerInfo manufacturerInfo, List<AssetPurchase> purchases,
-                 Quantity totalQuantity, AccountabilityReports accountabilityReports,
+    public Asset(String name, String location, List<String> keywords, List<String> images, Integer identityNo, String AUInventoryNo,
+                 boolean consumable, ManufacturerInfo manufacturerInfo, List<AssetPurchase> purchases,
+                 Quantity quantity, AccountabilityReports accountabilityReports,
                  MaintenanceRecord maintenanceRecord, String notes) {
-        _id = id;
+        _id = null;
         this.name = name;
         this.location = location;
         this.keywords = keywords;
         this.identityNo = identityNo;
         this.AUInventoryNo = AUInventoryNo;
-        this.isConsumable = isConsumable;
+        this.consumable = consumable;
         this.manufacturerInfo = manufacturerInfo;
         this.purchases = purchases;
-        this.totalQuantity = totalQuantity;
+        this.quantity = quantity;
         this.accountabilityReports = accountabilityReports;
         this.accountabilityReports.setAsset(this);
         this.maintenanceRecord = maintenanceRecord;
@@ -88,7 +86,7 @@ public class Asset implements DocumentConversion {
     }
 
     public boolean isConsumable() {
-        return isConsumable;
+        return consumable;
     }
 
     public ManufacturerInfo getManufacturerInfo() {
@@ -99,8 +97,8 @@ public class Asset implements DocumentConversion {
         return purchases;
     }
 
-    public Quantity getTotalQuantity() {
-        return totalQuantity;
+    public Quantity getQuantity() {
+        return quantity;
     }
 
     public AccountabilityReports getAccountabilityReports() {
@@ -119,7 +117,7 @@ public class Asset implements DocumentConversion {
         if (!this.purchases.contains(purchase)) this.purchases.add(purchase);
     }
 
-    public int get_id() {
+    public ObjectId get_id() {
         return _id;
     }
 
@@ -138,19 +136,18 @@ public class Asset implements DocumentConversion {
     @Override
     public Document toDocument() {
         return new Document()
-                .append("_id", get_id())
                 .append("name", getName())
                 .append("location", getLocation())
                 .append("keywords", getKeywords())
                 .append("mfrInfo", getManufacturerInfo().toDocument())
                 .append("AUInventoryNo", getAUInventoryNo())
                 .append("purchases", getPurchases().stream().map(AssetPurchase::toDocument).toList())
-                .append("totalQuantity", getTotalQuantity().toDocument())
+                .append("quantity", getQuantity().toDocument())
                 .append("accountabilityReports", getAccountabilityReports().toDocument())
                 .append("identityNo", getIdentityNo())
                 .append("notes", getNotes())
                 .append("maintenanceRecord", getMaintenanceRecord().toDocument())
-                .append("isConsumable", isConsumable())
+                .append("consumable", isConsumable())
                 .append("images", getImages());
     }
 }

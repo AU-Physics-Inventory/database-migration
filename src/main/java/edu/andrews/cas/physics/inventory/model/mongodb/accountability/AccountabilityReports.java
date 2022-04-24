@@ -5,8 +5,6 @@ import edu.andrews.cas.physics.inventory.model.mongodb.DocumentConversion;
 import edu.andrews.cas.physics.inventory.model.mongodb.asset.Asset;
 import edu.andrews.cas.physics.measurement.Quantity;
 import org.bson.Document;
-import org.bson.codecs.pojo.annotations.BsonIgnore;
-import org.bson.codecs.pojo.annotations.BsonProperty;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -59,7 +57,7 @@ public class AccountabilityReports implements DocumentConversion {
     }
 
     public Quantity calculateQuantityMissing() throws OperationOnQuantitiesException {
-        quantityMissing = new Quantity(0, asset.getTotalQuantity().getUnit());
+        quantityMissing = new Quantity(0, asset.getQuantity().getUnit());
         for (MissingReport report : missingReports) {
             quantityMissing = quantityMissing.add(report.quantityMissing());
         }

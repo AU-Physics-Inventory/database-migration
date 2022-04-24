@@ -11,7 +11,6 @@ import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.PutObjectRequest;
 import com.beust.jcommander.JCommander;
 import com.mongodb.client.model.Updates;
-import com.mongodb.client.result.InsertOneResult;
 import com.mongodb.reactivestreams.client.MongoClient;
 import com.mongodb.reactivestreams.client.MongoCollection;
 import com.mongodb.reactivestreams.client.MongoDatabase;
@@ -37,6 +36,7 @@ import edu.andrews.cas.physics.migration.database.MongoDBDataSource;
 import edu.andrews.cas.physics.migration.database.MySQLDataSource;
 import edu.andrews.cas.physics.migration.database.ResultSubscriber;
 import edu.andrews.cas.physics.migration.parsing.ParseHelper;
+import edu.andrews.cas.physics.migration.reactive.InsertOneResponse;
 import edu.andrews.cas.physics.mime.MimeTypes;
 import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -44,9 +44,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-import org.bson.*;
-import org.reactivestreams.Subscriber;
-import org.reactivestreams.Subscription;
+import org.bson.Document;
+import org.bson.types.ObjectId;
 
 import java.io.*;
 import java.sql.Date;
@@ -67,12 +66,18 @@ public class Migration {
     private static final Logger logger = LogManager.getLogger();
     private static final String receiptsFilePath = String.format("%s%s.receipts.map", System.getProperty("user.home"), File.separator);
     private static final String imagesFilePath = String.format("%s%s.images.map", System.getProperty("user.home"), File.separator);
+    private static final String assetsFilePath = String.format("%s%s.assets.map", System.getProperty("user.home"), File.separator);
+    private static final String setsFilePath = String.format("%s%s.sets.map", System.getProperty("user.home"), File.separator);
+    private static final String groupsFilePath = String.format("%s%s.groups.map", System.getProperty("user.home"), File.separator);
     private static final String manualsFilePath = String.format("%s%s.manuals.txt", System.getProperty("user.home"), File.separator);
     private static final ParseHelper parseHelper = ParseHelper.getInstance();
     private static final ArrayList<String> dateFormats;
 
     private static ConcurrentHashMap<Integer, String> receipts = new ConcurrentHashMap<>();
     private static ConcurrentHashMap<Integer, List<String>> images = new ConcurrentHashMap<>();
+    private static ConcurrentHashMap<Integer, ObjectId> assets = new ConcurrentHashMap<>();
+    private static ConcurrentHashMap<Integer, ObjectId> sets = new ConcurrentHashMap<>();
+    private static ConcurrentHashMap<Integer, ObjectId> groups = new ConcurrentHashMap<>();
     private static MongoDatabase mongodb;
     private static AmazonS3 spaces;
     private static String spaceName;
@@ -119,6 +124,9 @@ public class Migration {
 
         File receiptsFile = new File(args.getReceiptsPath() == null ? receiptsFilePath : args.getReceiptsPath());
         File imagesFile = new File(args.getImagesPath() == null ? imagesFilePath : args.getImagesPath());
+        File assetsFile = new File(args.getAssetsPath() == null ? assetsFilePath : args.getAssetsPath());
+        File setsFile = new File(args.getSetsPath() == null ? setsFilePath : args.getSetsPath());
+        File groupsFile = new File(args.getGroupsPath() == null ? groupsFilePath : args.getGroupsPath());
         File manualsFile = new File(manualsFilePath);
 
         if (!receiptsFile.exists() || !imagesFile.exists()) migrateImagesAndReceipts();
@@ -136,12 +144,34 @@ public class Migration {
             fis.close();
         }
         if (!manualsFile.exists()) migrateManuals();
-        migrateAssets();
-        migrateSets();
-        migrateGroups();
+        if (!assetsFile.exists()) migrateAssets();
+        else {
+            FileInputStream fis = new FileInputStream(assetsFile);
+            ObjectInputStream ois = new ObjectInputStream(fis);
+            assets = (ConcurrentHashMap<Integer, ObjectId>) ois.readObject();
+            ois.close();
+            fis.close();
+        }
+        if (!groupsFile.exists()) migrateGroups();
+        else {
+            FileInputStream fis = new FileInputStream(groupsFile);
+            ObjectInputStream ois = new ObjectInputStream(fis);
+            groups = (ConcurrentHashMap<Integer, ObjectId>) ois.readObject();
+            ois.close();
+            fis.close();
+        }
+        if (!setsFile.exists()) migrateSets();
+        else {
+            FileInputStream fis = new FileInputStream(setsFile);
+            ObjectInputStream ois = new ObjectInputStream(fis);
+            sets = (ConcurrentHashMap<Integer, ObjectId>) ois.readObject();
+            ois.close();
+            fis.close();
+        }
         migrateLabs();
         receiptsFile.deleteOnExit();
         imagesFile.deleteOnExit();
+        assetsFile.deleteOnExit();
         manualsFile.deleteOnExit();
         parseHelper.stop();
         parseHelper.exit(); // TODO TEST APPLICATION TERMINATES
@@ -255,7 +285,11 @@ public class Migration {
                                 case 2 -> ResourceType.GROUP;
                                 default -> throw new IllegalArgumentException("Unexpected type " + r2.getInt("type"));
                             };
-                            int typeId = r2.getInt("type_id");
+                            ObjectId typeId = switch (type) {
+                                case ASSET -> assets.get(r2.getInt("type_id"));
+                                case SET -> sets.get(r2.getInt("type_id"));
+                                case GROUP -> groups.get(r2.getInt("type_id"));
+                            };
                             Quantities quantities = new Quantities(parseQuantity(r2.getString("quantity_on_front_table"), "Lab", String.format("%s - %s", labCourse.getNumber(), lab.getName())), parseQuantity(r2.getString("quantity_per_station"), "Lab", String.format("%s - %s", labCourse.getNumber(), lab.getName())));
                             String notes = r2.getString("notes");
                             lab.addResource(new LabResource(type, typeId, quantities, notes));
@@ -276,8 +310,8 @@ public class Migration {
         logger.info("[END MIGRATION] Labs");
     }
 
-    private static void migrateGroups() throws SQLException, InterruptedException {
-        ArrayList<edu.andrews.cas.physics.inventory.model.mysql.Group> groups = new ArrayList<>();
+    private static void migrateGroups() throws SQLException, InterruptedException, IOException {
+        ArrayList<edu.andrews.cas.physics.inventory.model.mysql.Group> groupList = new ArrayList<>();
 
         Connection con = MySQLDataSource.getConnection();
         if (!con.isValid(30)) throw new SQLException("Unable to connect to database.");
@@ -290,7 +324,7 @@ public class Migration {
         ResultSet resultSet = retrieveGroups.executeQuery();
 
         while (resultSet.next()) {
-            groups.add(new edu.andrews.cas.physics.inventory.model.mysql.Group(resultSet.getInt("id"), resultSet.getString("name")));
+            groupList.add(new edu.andrews.cas.physics.inventory.model.mysql.Group(resultSet.getInt("id"), resultSet.getString("name")));
         }
 
         resultSet.close();
@@ -299,20 +333,20 @@ public class Migration {
 
         MongoCollection<Document> collection = mongodb.getCollection("groups");
 
-        groups.parallelStream().forEach(g -> {
+        groupList.parallelStream().forEach(g -> {
             logger.info("Migrating Group ID {}", g.id());
             try (Connection c = MySQLDataSource.getConnection();
                  PreparedStatement p1 = c.prepareStatement("SELECT asset_id FROM group_records WHERE group_id = ?;");
                  PreparedStatement p2 = c.prepareStatement("SELECT asset_record_number FROM group_records WHERE group_id = ?;")) {
 
-                Group group = new Group(g.id(), g.name());
+                Group group = new Group(g.name());
 
                 p1.setInt(1, g.id());
                 p2.setInt(1, g.id());
 
                 logger.info("Retrieving assets tied to Group ID {}", g.id());
                 ResultSet r1 = p1.executeQuery();
-                while (r1.next()) group.addAsset(r1.getInt("asset_id"));
+                while (r1.next()) group.addAsset(assets.get(r1.getInt("asset_id")));
                 r1.close();
 
                 logger.info("Retrieving Identity Numbers tied to Group ID {}", g.id());
@@ -320,16 +354,33 @@ public class Migration {
                 while (r2.next()) group.addIdentityNo(r2.getInt("asset_record_number"));
                 r2.close();
 
-                collection.insertOne(group.toDocument()).subscribe(new ResultSubscriber<>());
+                var future = new CompletableFuture<ObjectId>();
+                var response = new InsertOneResponse(future);
+                collection.insertOne(group.toDocument()).subscribe(response);
+                future.whenCompleteAsync((o, t) -> {
+                    if (t == null) groups.put(g.id(), o);
+                    else logger.error(t);
+                });
             } catch (SQLException e) {
                 logger.error(String.format("Error on Group ID %s", g.id()), e);
             }
-            logger.info("[END MIGRATION] Groups");
         });
+        logger.info("[END MIGRATION] Groups");
+        logger.info("[BEGIN SERIALIZATION] Groups");
+
+        File groupsFile = new File(groupsFilePath);
+        FileOutputStream fos = new FileOutputStream(groupsFile);
+        ObjectOutputStream oos = new ObjectOutputStream(fos);
+        oos.writeObject(groups);
+        oos.close();
+        fos.close();
+
+        logger.info("Groups successfully serialized to {}", groupsFile.getAbsolutePath());
+        logger.info("[END SERIALIZATION] Groups");
     }
 
-    private static void migrateSets() throws SQLException, InterruptedException {
-        ArrayList<edu.andrews.cas.physics.inventory.model.mysql.Set> sets = new ArrayList<>();
+    private static void migrateSets() throws SQLException, InterruptedException, IOException {
+        ArrayList<edu.andrews.cas.physics.inventory.model.mysql.Set> setsList = new ArrayList<>();
 
         Connection con = MySQLDataSource.getConnection();
         if (!con.isValid(30)) throw new SQLException("Unable to connect to database.");
@@ -342,7 +393,7 @@ public class Migration {
         ResultSet resultSet = retrieveSets.executeQuery();
 
         while (resultSet.next()) {
-            sets.add(new edu.andrews.cas.physics.inventory.model.mysql.Set(resultSet.getInt("id"), resultSet.getString("name")));
+            setsList.add(new edu.andrews.cas.physics.inventory.model.mysql.Set(resultSet.getInt("id"), resultSet.getString("name")));
         }
 
         resultSet.close();
@@ -351,7 +402,7 @@ public class Migration {
 
         MongoCollection<Document> collection = mongodb.getCollection("sets");
 
-        sets.parallelStream().forEach(s -> {
+        setsList.parallelStream().forEach(s -> {
             logger.info("Migrating Set ID {}", s.id());
             try (Connection c = MySQLDataSource.getConnection();
                  PreparedStatement p1 = c.prepareStatement("SELECT asset_id FROM set_records WHERE set_id = ?;");
@@ -366,7 +417,7 @@ public class Migration {
 
                 logger.info("Retrieving assets tied to Set ID {}", s.id());
                 ResultSet r1 = p1.executeQuery();
-                while (r1.next()) set.addAsset(r1.getInt("asset_id"));
+                while (r1.next()) set.addAsset(assets.get(r1.getInt("asset_id")));
                 r1.close();
 
                 logger.info("Retrieving Identity Numbers tied to Set ID {}", s.id());
@@ -376,15 +427,32 @@ public class Migration {
 
                 logger.info("Retrieving groups tied to Set ID {}", s.id());
                 ResultSet r3 = p3.executeQuery();
-                while (r3.next()) set.addGroup(r3.getInt("collection_group_id"));
+                while (r3.next()) set.addGroup(groups.get(r3.getInt("collection_group_id")));
                 r3.close();
 
-                collection.insertOne(set.toDocument()).subscribe(new ResultSubscriber<>());
+                var future = new CompletableFuture<ObjectId>();
+                var response = new InsertOneResponse(future);
+                collection.insertOne(set.toDocument()).subscribe(response);
+                future.whenCompleteAsync((o, t) -> {
+                    if (t == null) sets.put(s.id(), o);
+                    else logger.error(t);
+                });
             } catch (SQLException e) {
                 logger.error(String.format("Error on Set ID %s", s.id()), e);
             }
-            logger.info("[END MIGRATION] Sets");
         });
+        logger.info("[END MIGRATION] Sets");
+        logger.info("[BEGIN SERIALIZATION] Sets");
+
+        File setsFile = new File(setsFilePath);
+        FileOutputStream fos = new FileOutputStream(setsFile);
+        ObjectOutputStream oos = new ObjectOutputStream(fos);
+        oos.writeObject(groups);
+        oos.close();
+        fos.close();
+
+        logger.info("Sets successfully serialized to {}", setsFile.getAbsolutePath());
+        logger.info("[END SERIALIZATION] Sets");
     }
 
     private static void migrateImagesAndReceipts() throws InterruptedException, SQLException, IOException {
@@ -643,8 +711,14 @@ public class Migration {
 
                 String notes = e.getNotes();
 
-                Asset asset = new Asset(id, name, location, keywords, imgs, identityNo, AUInventoryNo, isConsumable, mfrInfo, purchases, totalQuantity, accountabilityReports, maintenanceRecord, notes);
-                assetsCollection.insertOne(asset.toDocument()).subscribe(new ResultSubscriber<>());
+                Asset asset = new Asset(name, location, keywords, imgs, identityNo, AUInventoryNo, isConsumable, mfrInfo, purchases, totalQuantity, accountabilityReports, maintenanceRecord, notes);
+                var future = new CompletableFuture<ObjectId>();
+                var response = new InsertOneResponse(future);
+                assetsCollection.insertOne(asset.toDocument()).subscribe(response);
+                future.whenCompleteAsync((o, t) -> {
+                    if (t == null) assets.put(id, o);
+                    else logger.error(t);
+                });
                 if (hardCopyManualAvailable)
                     manualsCollection.findOneAndUpdate(eq("identityNo", identityNo), Updates.set("hardcopy", true)).subscribe(new ResultSubscriber<>());
                 logger.info("Finished migration of Asset #{}", id);
@@ -655,6 +729,17 @@ public class Migration {
         });
         logger.info("[END MIGRATION] Assets");
         parseHelper.stop();
+        logger.info("[BEGIN SERIALIZATION] Assets");
+
+        File assetsFile = new File(assetsFilePath);
+        FileOutputStream fos = new FileOutputStream(assetsFile);
+        ObjectOutputStream oos = new ObjectOutputStream(fos);
+        oos.writeObject(assets);
+        oos.close();
+        fos.close();
+
+        logger.info("Assets successfully serialized to {}", assetsFile.getAbsolutePath());
+        logger.info("[END SERIALIZATION] Assets");
     }
 
     private static LocalDate parseDate(String s) throws RuntimeException {
