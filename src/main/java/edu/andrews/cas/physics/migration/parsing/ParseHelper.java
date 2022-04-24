@@ -4,7 +4,6 @@ import edu.andrews.cas.physics.measurement.Quantity;
 import edu.andrews.cas.physics.measurement.Unit;
 import javafx.application.Application;
 import javafx.application.Platform;
-import javafx.beans.value.ObservableValueBase;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
@@ -14,12 +13,15 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.text.Text;
 import javafx.stage.Stage;
 import javafx.stage.StageStyle;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 public class ParseHelper extends Application {
+    private static final Logger logger = LogManager.getLogger();
     private static ParseHelper instance;
 
     private final ConcurrentLinkedQueue<ParseDocument<?>> queue;
@@ -149,6 +151,7 @@ public class ParseHelper extends Application {
                     }
                 }
             }
+            logger.info("[Parse Helper -- Queue Poller] Thread terminated successfully.");
         });
         queuePoller.start();
     }

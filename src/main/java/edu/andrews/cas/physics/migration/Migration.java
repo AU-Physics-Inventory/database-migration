@@ -175,6 +175,8 @@ public class Migration {
         manualsFile.deleteOnExit();
         parseHelper.stop();
         parseHelper.exit(); // TODO TEST APPLICATION TERMINATES
+        logger.info("DATABASE MIGRATION COMPLETED SUCCESSFULLY.");
+        System.exit(0);
     }
 
     private static void migrateManuals() throws SQLException, InterruptedException, IOException {
@@ -848,6 +850,7 @@ public class Migration {
 
     private static double parsePrice(String s, String objectName, String identifier) throws ExecutionException, InterruptedException {
         if (s.isBlank()) return 0.00;
+        if (s.strip().equals("###.##")) return 9999.99;
         try {
             return Double.parseDouble(s.replaceAll("[\\$,]", "").strip());
         } catch (NumberFormatException e) {
@@ -868,11 +871,13 @@ public class Migration {
                     || s.contains("various")
                     || s.contains("varying")
                     || s.contains("lot")
-                    || s.contains("misc"))
+                    || s.contains("misc")
+                    || s.contains("most"))
                 return new Quantity(9999, Unit.UNITS);
 
             if (StringUtils.isAlpha(s)) throw new Exception(); // trigger parse helper
-            String numSplit = s.replaceAll(",", "").split("[^0-9.]+")[0];
+            s = s.replaceAll(",", "");
+            String numSplit = s.split("[^0-9.]+")[0];
             double value = Double.parseDouble(numSplit);
             String substr = s.substring(numSplit.length()).strip();
 
